@@ -110,9 +110,28 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
 .gnote{position:absolute;left:3px;right:3px;height:26px;border-radius:4px;border:1px solid rgba(255,255,255,.45);display:flex;align-items:center;justify-content:center;font-family:'Orbitron',monospace;font-size:.62rem;font-weight:900;color:rgba(0,0,0,.55);box-shadow:0 0 10px currentColor;}
 #hl-wrap{display:none;}
 .hl-seg{display:none;}
-.player-lane .hitline{position:absolute;bottom:68px;left:0;right:0;height:3px;z-index:20;pointer-events:none;background:rgba(255,255,255,.15);}
-.player-lane .hitline::after{content:'';position:absolute;inset:0;border-radius:2px;animation:hzp 1.4s ease-in-out infinite alternate;}
-@keyframes hzp{from{opacity:.5;}to{opacity:1;box-shadow:0 0 10px currentColor;}}
+/* Hitline sits at exactly the same vertical position as where notes are judged.
+   key-row is 58px tall + 7px top padding + 12px bottom padding = 77px.
+   So bottom of hitline = 77px from bottom of lane. */
+.player-lane .hitline{
+  position:absolute;
+  left:0;right:0;
+  bottom:77px;
+  height:3px;
+  z-index:20;
+  pointer-events:none;
+  border-radius:2px;
+}
+.player-lane .hitline::after{
+  content:'';
+  position:absolute;
+  inset:-1px 0;
+  height:5px;
+  border-radius:2px;
+  background:inherit;
+  animation:hzp 1.4s ease-in-out infinite alternate;
+}
+@keyframes hzp{from{opacity:.45;box-shadow:none;}to{opacity:1;box-shadow:0 0 12px currentColor;}}
 /* key button row */
 #key-row{width:100%;display:flex;justify-content:center;gap:3px;padding:7px 8px 12px;}
 .kb{flex:1;max-width:140px;height:58px;border:2px solid transparent;border-radius:4px;cursor:pointer;font-family:'Orbitron',monospace;font-size:.68rem;font-weight:900;color:rgba(0,0,0,.6);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;transition:all .07s;-webkit-tap-highlight-color:transparent;user-select:none;}
@@ -608,20 +627,23 @@ function startGame(){
   if(activeSong.audioBuf)playBuf(activeSong.audioBuf,0);
   gRun=true;gPaused=false;gLast=null;
   if(gRaf)cancelAnimationFrame(gRaf);
-  // Delay first tick by one frame so layout is complete and #hw has real height
-  requestAnimationFrame(()=>{
-    gRaf=requestAnimationFrame(gTick);
-  });
+  // One frame delay so layout is complete
+  requestAnimationFrame(()=>{ gRaf=requestAnimationFrame(gTick); });
   mqttPublish('host',{type:'heartbeat',sc:0,cb:1,run:true,title:activeSong.title,bpm:activeSong.bpm});
 }
 function replaySong(){if(activeSong)startGame();}
 
+function getHitY(){
+  // Must match .player-lane .hitline { bottom: 77px }
+  // hitY = distance from TOP of #hw to hitline
+  const hwH = Math.max(200, document.getElementById('hw').clientHeight);
+  return hwH - 77;
+}
+
 function gTick(ts){
   if(!gRun)return;if(gPaused){gRaf=requestAnimationFrame(gTick);return;}
   if(!gLast)gLast=ts;const dt=Math.min(ts-gLast,50);gLast=ts;gEl+=dt;
-  // Use clientHeight with fallback — if 0 (layout not ready) use 400px
-  const hwH=Math.max(200,document.getElementById('hw').clientHeight);
-  const hitY=hwH-70;
+  const hitY=getHitY();
   gPlayers.forEach(p=>{
     // px per ms = ppf * 60 / 1000
     const pxms=p.ppf*60/1000;
@@ -671,7 +693,7 @@ function pressKey(playerIdx){
   const p=gPlayers[playerIdx];if(!p)return;
   if(p.kbEl)p.kbEl.classList.add('pr');
   if(!gRun||gPaused)return;
-  const hitY=Math.max(200,document.getElementById('hw').clientHeight)-70;
+  const hitY=getHitY();
   const cands=p.liveN.filter(n=>!n.hit&&!n.miss);
   if(!cands.length){flashLane(p);return;}
   const best=cands.reduce((a,b)=>Math.abs(a.y-hitY)<Math.abs(b.y-hitY)?a:b);
@@ -698,12 +720,20 @@ function doHit(p,note,perfect){
   p.cb=Math.min(p.cb+1,20);p.maxCb=Math.max(p.maxCb,p.cb);
   showFB(perfect?'PERFECT!':'GOOD',perfect?'#ffee00':'#00f5ff',p);
   updScoreboard();
-  if(p.id==='host') mqttPublish('host',{type:'fb',text:perfect?'PERFECT!':'GOOD',color:perfect?'#ffee00':'#00f5ff',sc:p.sc,cb:p.cb});
+  // Send feedback + score to the relevant mobile player
+  mqttPublish('host', {
+    type: 'fb',
+    text: perfect ? 'PERFECT!' : 'GOOD',
+    color: perfect ? '#ffee00' : '#00f5ff',
+    playerId: p.id,
+    sc: p.sc, cb: p.cb
+  });
 }
 function doMiss(p){
   sfxMiss();p.hm++;p.cb=1;
   showFB('MISS','#ff0055',p);
   updScoreboard();
+  mqttPublish('host',{type:'fb',text:'MISS',color:'#ff0055',playerId:p.id,sc:p.sc,cb:p.cb});
 }
 function flashLane(p){p.lfEl.style.opacity='.45';setTimeout(()=>p.lfEl.style.opacity='0',90);}
 
@@ -816,7 +846,16 @@ function initMqtt(){
       if(!err){
         setPPSt('Wachten op spelers…','rgba(255,255,255,.32)');
         clearInterval(hbTimer);
-        hbTimer=setInterval(()=>mqttPublish('host',{type:'heartbeat',sc:0,cb:1,run:gRun,title:activeSong?.title||'',bpm:activeSong?.bpm||150}),600);
+        hbTimer=setInterval(()=>{
+          // Heartbeat with global state
+          mqttPublish('host',{type:'heartbeat',sc:0,cb:1,run:gRun,title:activeSong?.title||'',bpm:activeSong?.bpm||150});
+          // Also send each player's score so mobile stays in sync
+          gPlayers.forEach(p=>{
+            if(p.id!=='host'){
+              mqttPublish('host',{type:'score_update',playerId:p.id,sc:p.sc,cb:p.cb});
+            }
+          });
+        },600);
       }
     });
   });

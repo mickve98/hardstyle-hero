@@ -216,9 +216,23 @@ function connectMqtt() {
       if (document.getElementById('pg-conn').classList.contains('show')) {
         setMsg('Spelscherm gevonden ✓','ok');
         setTimeout(() => goPlay(m), 600);
-      } else { updHUD(m); }
+      } else {
+        // Only update title/bpm from heartbeat, NOT score (score comes via fb)
+        if (m.title !== undefined)
+          document.getElementById('info').textContent = (m.title||'—') + (m.bpm?' · '+m.bpm+' BPM':'');
+      }
     }
-    if (m.type === 'fb') { showFB(m.text, m.color); updHUD(m); }
+    if (m.type === 'score_update' && m.playerId === pid) {
+      updHUD(m);
+    }
+    if (m.type === 'fb') {
+      // Only show feedback for this player's hits/misses
+      // If playerId is set, only react if it matches ours; otherwise show all
+      if (!m.playerId || m.playerId === pid) {
+        showFB(m.text, m.color);
+        updHUD(m);
+      }
+    }
   });
   mqttClient.on('error', () => setMsg('Relay fout — herverbinden…','err'));
   mqttClient.on('close', () => {
