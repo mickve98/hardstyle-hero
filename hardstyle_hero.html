@@ -121,6 +121,19 @@ body{background:var(--dark);font-family:'Rajdhani',sans-serif;overflow:hidden;he
 #pp-qr{width:100px;height:100px;display:block;margin:0 auto 8px;border-radius:4px;}
 .pp-copy{width:100%;padding:8px;background:transparent;border:1px solid rgba(0,245,255,.3);color:var(--blue);font-family:'Orbitron',monospace;font-size:.58rem;letter-spacing:.06em;cursor:pointer;transition:all .18s;border-radius:2px;}
 .pp-copy:hover{background:rgba(0,245,255,.1);}
+/* GRID OFFSET */
+.offset-row{display:flex;align-items:center;gap:8px;font-size:.66rem;color:rgba(255,255,255,.36);flex-wrap:wrap;}
+.offset-row input[type=range]{flex:1;min-width:80px;accent-color:var(--yellow);}
+#offset-val{font-family:'Orbitron',monospace;font-size:.68rem;color:var(--yellow);min-width:52px;text-align:right;}
+/* PLAYERS LIST */
+.player-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.06);}
+.player-row:last-child{border-bottom:none;}
+.player-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.player-name{flex:1;font-size:.72rem;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.player-score{font-family:'Orbitron',monospace;font-size:.72rem;color:var(--yellow);}
+.player-cb{font-size:.62rem;color:rgba(255,255,255,.35);}
+#players-wrap{margin-top:8px;max-height:160px;overflow-y:auto;}
+#players-title{font-family:'Orbitron',monospace;font-size:.6rem;color:rgba(255,255,255,.3);letter-spacing:.1em;margin-bottom:4px;}
 @keyframes fu{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
 </style>
 </head>
@@ -153,6 +166,14 @@ body{background:var(--dark);font-family:'Rajdhani',sans-serif;overflow:hidden;he
     <button class="bg" onclick="clearAll()">✕ WIS</button>
     <button class="bp" onclick="goPlay()">▶ SPELEN</button>
     <button class="bg" onclick="goMenu()">↩ MENU</button>
+  </div>
+  <div class="offset-row" style="padding:5px 12px;background:rgba(0,0,0,.4);border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0;">
+    <span>GRID OFFSET</span>
+    <input type="range" id="offset-sl" min="-500" max="500" value="0" step="1" oninput="onOffsetChange(+this.value)">
+    <span id="offset-val">0 ms</span>
+    <button class="snb" onclick="resetOffset()" style="padding:3px 8px;font-size:.58rem;">RESET</button>
+    <button class="snb" onclick="applyOffset()" style="padding:3px 8px;font-size:.58rem;color:var(--green);border-color:var(--green);">✓ TOEPASSEN</button>
+    <span style="font-size:.58rem;color:rgba(255,255,255,.22);">Sleep de slider om alle noten te verschuiven</span>
   </div>
   <div class="ov-wrap" id="ov-wrap"><canvas id="ov-canvas"></canvas><div id="ov-view"></div><div id="ov-ph"></div></div>
   <div class="wv-outer" id="wv-outer"><canvas id="wv-canvas"></canvas><div id="wv-ph"></div><div id="wv-ghost"></div></div>
@@ -198,6 +219,8 @@ body{background:var(--dark);font-family:'Rajdhani',sans-serif;overflow:hidden;he
   <div class="pp-st" id="pp-sub">Scan QR of open hardstyle_mobile.html en voer de code in</div>
   <img id="pp-qr" src="" alt="QR" width="100" height="100">
   <button class="pp-copy" onclick="copyMobileLink()">📋 KOPIEER LINK</button>
+  <div id="players-title">SPELERS</div>
+  <div id="players-wrap"><div style="font-size:.6rem;color:rgba(255,255,255,.2);">Nog geen spelers verbonden</div></div>
 </div>
 
 <!-- MQTT.js -->
@@ -282,6 +305,9 @@ function openEditor(song){
   ensureCtx();stopAudio();edPlaying=false;
   edSong=song;edNotes=song.notes?[...song.notes]:[];edHistory=[];
   edBpm=song.bpm||150;viewStart=0;zoomIdx=5;viewDur=ZOOM_LEVELS[zoomIdx];edPlayOff=0;
+  edGridOffset=0;
+  document.getElementById('offset-sl').value=0;
+  document.getElementById('offset-val').textContent='0 ms';
   document.getElementById('ed-ttl').textContent=song.title;
   document.getElementById('ed-bpm').value=edBpm;
   document.getElementById('ed-pb').textContent='▶';document.getElementById('ed-pb').classList.remove('on');
@@ -318,7 +344,7 @@ function drawOverview(){
   const cx=cv.getContext('2d');cx.fillStyle='#030009';cx.fillRect(0,0,W,H);
   const dur=songDur();
   if(wvPeaksHi){cx.beginPath();const mid=H/2;for(let i=0;i<wvPeaksHi.length;i++){const x=i/wvPeaksHi.length*W,h=wvPeaksHi[i]*mid*.9;cx.moveTo(x,mid-h);cx.lineTo(x,mid+h);}cx.strokeStyle='rgba(0,245,255,.3)';cx.lineWidth=1;cx.stroke();}
-  edNotes.forEach(n=>{const x=n.ms/1000/dur*W;cx.fillStyle='rgba(255,238,0,.7)';cx.fillRect(x-1,0,2,H);});
+  edNotes.forEach(n=>{const x=(n.ms+edGridOffset)/1000/dur*W;cx.fillStyle='rgba(255,238,0,.7)';cx.fillRect(x-1,0,2,H);});
   const vx=viewStart/dur*W,vw=viewDur/dur*W;
   document.getElementById('ov-view').style.left=vx+'px';
   document.getElementById('ov-view').style.width=Math.max(4,vw)+'px';
@@ -340,13 +366,22 @@ function drawZoomed(){
   }
   if(wvPeaks){const mid=H/2;cx.beginPath();for(let x=0;x<W;x++){const t=viewStart+x/W*viewDur,ms=t*1000,i=Math.floor(ms),v=wvPeaks[Math.min(i,wvPeaks.length-1)]||0,h=v*mid*.92;cx.moveTo(x,mid-h);cx.lineTo(x,mid+h);}cx.strokeStyle='rgba(0,245,255,.55)';cx.lineWidth=1;cx.stroke();}
   edNotes.forEach((n,idx)=>{
-    const t=n.ms/1000;if(t<viewStart-0.01||t>vEnd+0.01)return;
+    const t=(n.ms+edGridOffset)/1000;if(t<viewStart-0.01||t>vEnd+0.01)return;
     const x=secToX(t);
     const grad=cx.createLinearGradient(x-8,0,x+8,0);grad.addColorStop(0,'transparent');grad.addColorStop(.5,'rgba(255,238,0,.22)');grad.addColorStop(1,'transparent');cx.fillStyle=grad;cx.fillRect(x-8,0,16,H);
     cx.strokeStyle='#ffee00';cx.lineWidth=2;cx.shadowColor='#ffee00';cx.shadowBlur=6;cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();cx.shadowBlur=0;
     cx.fillStyle='#ffee00';cx.beginPath();cx.moveTo(x-5,0);cx.lineTo(x+5,0);cx.lineTo(x,8);cx.fill();
     if(viewDur<10){cx.fillStyle='rgba(0,0,0,.75)';cx.fillRect(x-10,10,20,13);cx.fillStyle='#ffee00';cx.font='bold 9px monospace';cx.textAlign='center';cx.fillText(idx+1,x,21);cx.textAlign='left';}
   });
+  // Show original positions as ghost if offset active
+  if(edGridOffset!==0){
+    edNotes.forEach(n=>{
+      const t=n.ms/1000;if(t<viewStart-0.01||t>vEnd+0.01)return;
+      const x=secToX(t);
+      cx.strokeStyle='rgba(255,100,100,.35)';cx.lineWidth=1;cx.setLineDash([3,3]);
+      cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();cx.setLineDash([]);
+    });
+  }
   document.getElementById('wv-ph').style.left=secToX(edCurrentTime())+'px';
 }
 function updateScrollbar(){
@@ -378,7 +413,37 @@ function zoomOut(){if(zoomIdx<ZOOM_LEVELS.length-1){zoomIdx++;viewDur=ZOOM_LEVEL
 function clampView(){const dur=songDur();viewStart=Math.max(0,Math.min(dur-viewDur,viewStart));}
 function setSnap(el){edSnap=parseInt(el.dataset.s);document.querySelectorAll('.snb').forEach(b=>b.classList.remove('on'));el.classList.add('on');}
 function onBpmChange(){edBpm=parseInt(document.getElementById('ed-bpm').value)||150;}
-function autoGrid(){const dur=songDur(),beatMs=60000/edBpm,nn=[];for(let ms=beatMs;ms<dur*1000-beatMs*.5;ms+=beatMs)nn.push({ms:Math.round(ms)});if(!confirm(`AUTO-GRID plaatst ${nn.length} noten op elk beat (${edBpm} BPM).\nBestaande noten worden vervangen.`))return;saveHistory();edNotes=nn;updNCount();}
+function autoGrid(){const dur=songDur(),beatMs=60000/edBpm,nn=[];for(let ms=beatMs;ms<dur*1000-beatMs*.5;ms+=beatMs)nn.push({ms:Math.round(ms)});if(!confirm(`AUTO-GRID plaatst ${nn.length} noten op elk beat (${edBpm} BPM).\nBestaande noten worden vervangen.`))return;saveHistory();edNotes=nn;
+  // Reset offset slider when new grid is applied
+  edGridOffset=0;document.getElementById('offset-sl').value=0;document.getElementById('offset-val').textContent='0 ms';
+  updNCount();}
+
+// ── GRID OFFSET ──
+// edGridOffset = preview-only offset in ms (not applied to edNotes yet)
+// When "TOEPASSEN" is clicked it shifts all note ms values permanently
+let edGridOffset = 0;
+
+function onOffsetChange(v) {
+  edGridOffset = v;
+  document.getElementById('offset-val').textContent = (v >= 0 ? '+' : '') + v + ' ms';
+  // No need to modify edNotes — drawZoomed reads edGridOffset for display
+}
+
+function resetOffset() {
+  edGridOffset = 0;
+  document.getElementById('offset-sl').value = 0;
+  document.getElementById('offset-val').textContent = '0 ms';
+}
+
+function applyOffset() {
+  if (edGridOffset === 0) return;
+  saveHistory();
+  const dur = songDur() * 1000;
+  edNotes = edNotes.map(n => ({ ms: Math.max(0, Math.min(dur, n.ms + edGridOffset)) }));
+  edNotes.sort((a,b) => a.ms - b.ms);
+  resetOffset();
+  updNCount();
+}
 function toggleEdPlay(){ensureCtx();if(edPlaying){edPlayOff=edCurrentTime();stopAudio();edPlaying=false;document.getElementById('ed-pb').textContent='▶';document.getElementById('ed-pb').classList.remove('on');}else{edPlaying=true;edPlayStart=actx.currentTime;if(edSong.audioBuf)playBuf(edSong.audioBuf,edPlayOff);document.getElementById('ed-pb').textContent='⏸';document.getElementById('ed-pb').classList.add('on');}}
 function seekTo(sec){const was=edPlaying;if(was){stopAudio();edPlaying=false;}edPlayOff=Math.max(0,Math.min(songDur(),sec));viewStart=Math.max(0,Math.min(songDur()-viewDur,sec-viewDur*0.15));clampView();if(was){edPlayStart=actx.currentTime;if(edSong.audioBuf)playBuf(edSong.audioBuf,edPlayOff);edPlaying=true;}}
 function goPlay(){if(!edNotes.length){alert('Geen noten! Klik op de waveform of gebruik AUTO-GRID.');return;}edSong.notes=[...edNotes];edSong.bpm=edBpm;activeSong=edSong;if(edRaf){cancelAnimationFrame(edRaf);edRaf=null;}stopAudio();edPlaying=false;renderList();startGame();}
@@ -501,17 +566,22 @@ document.getElementById('wv-outer').addEventListener('wheel',e=>{
 },{passive:false});
 
 // ══════════════════════════════════════════════════════════════
-//  MQTT RELAY
-//  Broker: HiveMQ public  (wss://broker.hivemq.com:8884/mqtt)
+//  MQTT RELAY — MULTIPLAYER
+//
+//  Each player gets a unique player ID.
+//  Desktop subscribes to: hardstyle-hero/CODE/mobile/+  (wildcard)
+//  Mobile publishes to:   hardstyle-hero/CODE/mobile/PLAYERID
 //  Desktop publishes to:  hardstyle-hero/CODE/host
-//  Desktop subscribes to: hardstyle-hero/CODE/mobile
-//  Mobile does the reverse — perfectly separated, no echo
+//  Mobile subscribes to:  hardstyle-hero/CODE/host
+//
+//  Players object: { [playerId]: { name, color, sc, cb, connected } }
 // ══════════════════════════════════════════════════════════════
-let mqttClient = null;
-let mqttCode   = '';
-let ppVisible  = false;
+const PLAYER_COLORS = ['#ff0080','#00f5ff','#ffee00','#00ff88','#bf00ff','#ff8800'];
+let mqttClient    = null;
+let mqttCode      = '';
+let ppVisible     = false;
 let heartbeatTimer = null;
-let lastHitSeq = -1;
+let players       = {};   // keyed by playerId
 
 function genCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -523,29 +593,23 @@ function initMqtt() {
   setPPStatus('Verbinden met relay…', 'rgba(255,255,255,.35)');
   buildMobileLink();
 
-  // Unique client ID per session to avoid collisions
   const clientId = 'hsh-desktop-' + Math.random().toString(36).slice(2, 9);
-
   mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
-    clientId,
-    clean: true,
-    reconnectPeriod: 3000,
-    connectTimeout: 10000,
+    clientId, clean: true, reconnectPeriod: 3000, connectTimeout: 10000,
   });
 
   mqttClient.on('connect', () => {
-    // Subscribe to messages from mobile
-    mqttClient.subscribe('hardstyle-hero/' + mqttCode + '/mobile', err => {
+    // Wildcard subscribe: all players under this code
+    mqttClient.subscribe('hardstyle-hero/' + mqttCode + '/mobile/+', err => {
       if (!err) {
-        setPPStatus('Wachten op mobiel…', 'rgba(255,255,255,.35)');
-        // Start heartbeat so mobile knows host is alive
+        setPPStatus('Wachten op spelers…', 'rgba(255,255,255,.35)');
         clearInterval(heartbeatTimer);
         heartbeatTimer = setInterval(() => {
           mqttPublish('host', {
             type: 'heartbeat',
             sc: gSc, cb: gCb, run: gRun,
             title: activeSong?.title || '',
-            bpm:   activeSong?.bpm   || 150
+            bpm:   activeSong?.bpm   || 150,
           });
         }, 600);
       }
@@ -553,42 +617,84 @@ function initMqtt() {
   });
 
   mqttClient.on('message', (topic, payload) => {
+    // topic = hardstyle-hero/CODE/mobile/PLAYERID
+    const parts    = topic.split('/');
+    const playerId = parts[3] || 'unknown';
     let msg;
     try { msg = JSON.parse(payload.toString()); } catch { return; }
     if (!msg) return;
+    handlePlayerMsg(playerId, msg);
+  });
 
-    if (msg.type === 'join') {
-      setPPStatus('📱 Verbonden!', 'var(--green)');
-      document.getElementById('peer-panel').classList.add('connected');
-      document.getElementById('pp-toggle').classList.add('connected');
-    }
-    if (msg.type === 'leave') {
-      setPPStatus('Mobiel verbroken', 'rgba(255,80,80,.6)');
+  mqttClient.on('error',     e  => setPPStatus('Relay fout', 'rgba(255,100,50,.8)'));
+  mqttClient.on('reconnect', () => setPPStatus('Herverbinden…', 'rgba(255,200,50,.6)'));
+}
+
+function handlePlayerMsg(playerId, msg) {
+  if (msg.type === 'join') {
+    const idx  = Object.keys(players).length % PLAYER_COLORS.length;
+    const name = msg.name || ('Speler ' + (idx + 1));
+    players[playerId] = {
+      name, color: PLAYER_COLORS[idx],
+      sc: 0, cb: 1, connected: true,
+      lastHitSeq: -1,
+    };
+    updatePlayersPanel();
+    setPPStatus(Object.keys(players).filter(k=>players[k].connected).length + ' speler(s) verbonden', 'var(--green)');
+    document.getElementById('peer-panel').classList.add('connected');
+    document.getElementById('pp-toggle').classList.add('connected');
+  }
+  if (msg.type === 'leave' && players[playerId]) {
+    players[playerId].connected = false;
+    updatePlayersPanel();
+    const active = Object.values(players).filter(p=>p.connected).length;
+    if (active === 0) {
+      setPPStatus('Alle spelers verbroken', 'rgba(255,80,80,.6)');
       document.getElementById('peer-panel').classList.remove('connected');
       document.getElementById('pp-toggle').classList.remove('connected');
+    } else {
+      setPPStatus(active + ' speler(s) verbonden', 'var(--green)');
     }
-    if (msg.type === 'hit' && msg.seq !== lastHitSeq) {
-      lastHitSeq = msg.seq;
+  }
+  if (msg.type === 'hit' && players[playerId]) {
+    const p = players[playerId];
+    if (msg.seq !== p.lastHitSeq) {
+      p.lastHitSeq = msg.seq;
+      // Each player triggers their own hit — for now all share the same game lane
+      // Future: could separate lanes per player
       pressKey();
       setTimeout(() => releaseKey(), 100);
     }
-  });
+  }
+}
 
-  mqttClient.on('error', err => {
-    setPPStatus('Relay fout: ' + err.message, 'rgba(255,100,50,.8)');
-  });
+function updatePlayersPanel() {
+  const wrap = document.getElementById('players-wrap');
+  const list = Object.entries(players);
+  if (!list.length) {
+    wrap.innerHTML = '<div style="font-size:.6rem;color:rgba(255,255,255,.2);">Nog geen spelers verbonden</div>';
+    return;
+  }
+  wrap.innerHTML = list.map(([id, p]) => `
+    <div class="player-row" style="opacity:${p.connected?1:.4}">
+      <div class="player-dot" style="background:${p.color};box-shadow:0 0 5px ${p.color}"></div>
+      <div class="player-name" style="color:${p.color}">${p.name}</div>
+      <div class="player-score">${String(p.sc).padStart(6,'0')}</div>
+      <div class="player-cb">x${p.cb}</div>
+    </div>`).join('');
+}
 
-  mqttClient.on('reconnect', () => {
-    setPPStatus('Herverbinden…', 'rgba(255,200,50,.6)');
-  });
+// Patch showFB to also send feedback with per-player score context
+const _origShowFB = showFB;
+function showFB(t, c) {
+  _origShowFB(t, c);
+  mqttPublish('host', { type: 'fb', text: t, color: c, sc: gSc, cb: gCb });
 }
 
 function mqttPublish(channel, data) {
   if (!mqttClient || !mqttClient.connected || !mqttCode) return;
   const topic = 'hardstyle-hero/' + mqttCode + '/' + channel;
-  try {
-    mqttClient.publish(topic, JSON.stringify(data), { qos: 0, retain: false });
-  } catch(e) {}
+  try { mqttClient.publish(topic, JSON.stringify(data), { qos: 0, retain: false }); } catch(e) {}
 }
 
 function buildMobileLink() {
@@ -609,13 +715,12 @@ function copyMobileLink() {
       btn.textContent = '✓ GEKOPIEERD!';
       setTimeout(() => btn.textContent = '📋 KOPIEER LINK', 2000);
     })
-    .catch(() => { prompt('Kopieer deze link naar je iPhone:', url); });
+    .catch(() => { prompt('Kopieer deze link:', url); });
 }
 
 function setPPStatus(txt, color) {
-  const el = document.getElementById('pp-st');
-  el.textContent = txt;
-  el.style.color  = color || 'rgba(255,255,255,.35)';
+  document.getElementById('pp-st').textContent = txt;
+  document.getElementById('pp-st').style.color = color || 'rgba(255,255,255,.35)';
 }
 
 function togglePeerPanel() {
