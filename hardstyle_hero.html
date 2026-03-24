@@ -110,13 +110,11 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
 .gnote{position:absolute;left:3px;right:3px;height:26px;border-radius:4px;border:1px solid rgba(255,255,255,.45);display:flex;align-items:center;justify-content:center;font-family:'Orbitron',monospace;font-size:.62rem;font-weight:900;color:rgba(0,0,0,.55);box-shadow:0 0 10px currentColor;}
 #hl-wrap{display:none;}
 .hl-seg{display:none;}
-/* Hitline sits at exactly the same vertical position as where notes are judged.
-   key-row is 58px tall + 7px top padding + 12px bottom padding = 77px.
-   So bottom of hitline = 77px from bottom of lane. */
+/* Hitline: key-row is hidden, so hitline sits 20px from bottom of lane */
 .player-lane .hitline{
   position:absolute;
   left:0;right:0;
-  bottom:77px;
+  bottom:20px;
   height:3px;
   z-index:20;
   pointer-events:none;
@@ -133,7 +131,7 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
 }
 @keyframes hzp{from{opacity:.45;box-shadow:none;}to{opacity:1;box-shadow:0 0 12px currentColor;}}
 /* key button row */
-#key-row{width:100%;display:flex;justify-content:center;gap:3px;padding:7px 8px 12px;}
+#key-row{display:none;}
 .kb{flex:1;max-width:140px;height:58px;border:2px solid transparent;border-radius:4px;cursor:pointer;font-family:'Orbitron',monospace;font-size:.68rem;font-weight:900;color:rgba(0,0,0,.6);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;transition:all .07s;-webkit-tap-highlight-color:transparent;user-select:none;}
 .kb small{font-size:.5rem;opacity:.6;}
 .kb.pr{transform:scale(.9);filter:brightness(1.55);}
@@ -198,7 +196,7 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
     </label>
   </div>
   <div class="slist" id="slist"></div>
-  <div class="hint">SPATIEBALK = hit · ESC = pauze · 📱 rechtsonder = controllers</div>
+  <div class="hint">ESC = pauze · 📱 rechtsonder = controllers verbinden</div>
 </div>
 
 <!-- EDITOR -->
@@ -534,18 +532,8 @@ let gPlayers = [];   // [{id,name,color,diff,sc,cb,maxCb,hp,hg,hm,liveN,noteQ,la
 let gRun=false,gPaused=false,gRaf=null,gLast=null,gEl=0,gDur=1,gPOff=0;
 
 function buildGPlayers(){
-  // Start with desktop player (index 0)
-  const hostDiff = diff;
-  const hostPPF  = DIFF[hostDiff].ppf;
-  gPlayers = [{
-    id:'host', name:'HOST', color:'#ff0080',
-    diff:hostDiff, ppf:hostPPF,
-    sc:0,cb:1,maxCb:0,hp:0,hg:0,hm:0,
-    liveN:[], noteQ:[],
-    laneEl:null, kbEl:null, lfEl:null,
-    lastHitSeq:-1,
-  }];
-  // Add connected mobile players
+  // Only mobile players — host is just the screen/speaker
+  gPlayers = [];
   Object.entries(players).forEach(([id,p])=>{
     if(!p.connected)return;
     const pDiff = p.diff || 'medium';
@@ -558,6 +546,12 @@ function buildGPlayers(){
       lastHitSeq:-1,
     });
   });
+  // If no players connected, show a message
+  if(gPlayers.length===0){
+    alert('Geen telefoons verbonden!\nKlik op 📱 rechtsonder en verbind minstens één telefoon.');
+    return false;
+  }
+  return true;
 }
 
 function buildNoteQueueForPlayer(p){
@@ -595,15 +589,6 @@ function buildLanes(){
     const ln=document.createElement('div');ln.className='lname';ln.textContent=p.name;ln.style.color=p.color;lane.appendChild(ln);
     lw.appendChild(lane);
     p.laneEl=lane; p.lfEl=lf;
-    // Key button (only for host)
-    if(p.id==='host'){
-      const kb=document.createElement('button');
-      kb.className='kb';kb.style.background=p.color;
-      kb.style.boxShadow=`0 4px 0 rgba(0,0,0,.5),0 0 18px ${p.color}44`;
-      kb.innerHTML='SPATIE<small>HIT</small>';
-      kb.onpointerdown=()=>pressKey(0);kb.onpointerup=()=>releaseKey(0);
-      kr.appendChild(kb);p.kbEl=kb;
-    }
     // Scoreboard cell
     const cell=document.createElement('div');cell.className='sb-player'+(p.id==='host'?' me':'');
     cell.style.borderTop=`2px solid ${p.color}`;
@@ -615,7 +600,7 @@ function buildLanes(){
 function startGame(){
   if(!activeSong)return;ensureCtx();
   gDur=activeSong.audioBuf?activeSong.audioBuf.duration*1000:(60000/activeSong.bpm)*66;
-  buildGPlayers();
+  if(!buildGPlayers())return;
   gPlayers.forEach(p=>{
     p.sc=0;p.cb=1;p.maxCb=0;p.hp=0;p.hg=0;p.hm=0;p.liveN=[];
     p.noteQ=buildNoteQueueForPlayer(p);
@@ -634,10 +619,9 @@ function startGame(){
 function replaySong(){if(activeSong)startGame();}
 
 function getHitY(){
-  // Must match .player-lane .hitline { bottom: 77px }
-  // hitY = distance from TOP of #hw to hitline
+  // Must match .player-lane .hitline { bottom: 20px }
   const hwH = Math.max(200, document.getElementById('hw').clientHeight);
-  return hwH - 77;
+  return hwH - 20;
 }
 
 function gTick(ts){
@@ -818,9 +802,8 @@ document.addEventListener('keydown',e=>{
     return;
   }
   if(e.code==='Escape'){togglePause();return;}
-  if((e.code==='Space'||e.code==='KeyA')&&!e.repeat)pressKey(0);
+  // No host player — keyboard not used during game
 });
-document.addEventListener('keyup',e=>{if(e.code==='Space'||e.code==='KeyA')releaseKey(0);});
 document.getElementById('wv-outer').addEventListener('wheel',e=>{
   e.preventDefault();
   if(e.ctrlKey||e.metaKey){const rect=document.getElementById('wv-outer').getBoundingClientRect(),frac=(e.clientX-rect.left)/rect.width,pt=viewStart+frac*viewDur;if(e.deltaY<0)zoomIn();else zoomOut();viewStart=Math.max(0,Math.min(sDur()-viewDur,pt-frac*viewDur));clampV();}
