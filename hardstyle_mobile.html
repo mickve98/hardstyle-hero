@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Hardstyle Controller</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  background: #04000a;
+  color: #fff;
+  font-family: Arial, sans-serif;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── screens ── */
+.pg { display:none; flex-direction:column; align-items:center;
+      justify-content:center; height:100vh; padding:24px; gap:18px;
+      text-align:center; }
+.pg.show { display:flex; }
+
+h1 { font-size:1.4rem; letter-spacing:.1em;
+     background:linear-gradient(90deg,#ff0080,#00f5ff);
+     -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+p  { font-size:.85rem; color:rgba(255,255,255,.45); line-height:1.7; max-width:280px; }
+
+/* ── inputs / buttons ── */
+input[type=text] {
+  width:100%; max-width:280px;
+  text-align:center;
+  font-size:2rem; letter-spacing:.3em;
+  background:rgba(255,255,255,.07);
+  border:2px solid rgba(255,255,255,.2);
+  color:#fff; padding:12px 8px;
+  border-radius:6px; outline:none;
+  -webkit-appearance:none;
+}
+input[type=text]:focus { border-color:#00f5ff; }
+
+.btn {
+  width:100%; max-width:280px; padding:16px;
+  font-size:.9rem; font-weight:700; letter-spacing:.1em;
+  border:none; border-radius:6px; cursor:pointer;
+  -webkit-appearance:none; appearance:none;
+}
+.btn-pink { background:#ff0080; color:#000; }
+.btn-yellow { background:transparent; border:2px solid #ffee00; color:#ffee00; }
+.btn-dim { background:transparent; border:1px solid rgba(255,255,255,.2); color:rgba(255,255,255,.4); font-size:.8rem; }
+.btn:active { opacity:.7; transform:scale(.97); }
+.btn:disabled { opacity:.3; }
+
+#msg { font-size:.8rem; min-height:1.2em; color:rgba(255,255,255,.4); }
+#msg.ok  { color:#00ff88; }
+#msg.err { color:#ff5555; }
+
+/* ── play screen ── */
+#info { font-size:.65rem; color:rgba(255,255,255,.3); letter-spacing:.08em;
+        max-width:90vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.score-row { display:flex; gap:20px; align-items:baseline; }
+#sc { font-size:1.8rem; font-weight:700; color:#00f5ff; }
+#cb { font-size:1.1rem; color:#ffee00; }
+#fb { font-size:1.5rem; font-weight:700; min-height:1.8rem;
+      transition:opacity .2s; color:#ffee00; }
+
+/* ── big kick button ── */
+#kick {
+  width: min(70vw, 60vh);
+  height: min(70vw, 60vh);
+  border-radius: 50%;
+  border: 3px solid #ff0080;
+  background: rgba(255,0,128,.08);
+  box-shadow: 0 0 30px rgba(255,0,128,.3);
+  display: flex; align-items:center; justify-content:center;
+  flex-direction: column; gap:6px;
+  cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+  /* No touch-action restrictions */
+  user-select: none;
+  flex-shrink: 0;
+  transition: transform .07s, background .07s, box-shadow .07s;
+}
+#kick span { font-size:1.1rem; font-weight:700; letter-spacing:.15em; pointer-events:none; }
+#kick small { font-size:.65rem; color:rgba(255,255,255,.35); pointer-events:none; }
+
+/* Motion bar */
+.mrow { display:flex; align-items:center; gap:8px; font-size:.7rem; color:rgba(255,255,255,.3); }
+.mrow input { width:80px; accent-color:#ff0080; }
+.mbar-bg { width:70px; height:5px; background:rgba(255,255,255,.08); border-radius:3px; overflow:hidden; }
+#mbar { height:100%; width:0%; background:linear-gradient(90deg,#00f5ff,#ff0080); border-radius:3px; }
+#mlbl { font-size:.62rem; color:rgba(255,255,255,.25); }
+
+#disc { position:fixed; top:14px; right:14px; padding:6px 14px;
+        background:transparent; border:1px solid rgba(255,255,255,.15);
+        color:rgba(255,255,255,.3); font-size:.65rem; border-radius:4px;
+        cursor:pointer; -webkit-appearance:none; }
+#disc:active { color:#ff0080; border-color:#ff0080; }
+</style>
+</head>
+<body>
+
+<!-- SCHERM 1: iOS SENSOR TOESTEMMING -->
+<div class="pg show" id="pg-perm">
+  <h1>HARDSTYLE HERO</h1>
+  <p style="font-size:1.5rem">📳</p>
+  <p>iOS vereist toestemming voor de bewegingssensor.<br>Tik de gele knop.</p>
+  <button class="btn btn-yellow" onclick="askPerm()">BEWEGINGSSENSOR TOESTAAN</button>
+  <button class="btn btn-dim" onclick="skipPerm()">Overslaan</button>
+  <p id="perm-note" style="min-height:1em"></p>
+</div>
+
+<!-- SCHERM 2: VERBINDEN -->
+<div class="pg" id="pg-conn">
+  <h1>HARDSTYLE HERO</h1>
+  <p>Voer de 6-cijferige code in van het spelscherm (klik 📱 rechtsonder)</p>
+  <input type="text" id="code" inputmode="numeric" maxlength="6"
+         placeholder="000000" autocomplete="off" spellcheck="false">
+  <button class="btn btn-pink" id="conn-btn" onclick="doConn()">VERBINDEN</button>
+  <div id="msg">Klaar</div>
+</div>
+
+<!-- SCHERM 3: SPELEN -->
+<div class="pg" id="pg-play">
+  <button id="disc" onclick="doDisc()">LOSKOPPELEN</button>
+  <div id="info">—</div>
+  <div class="score-row"><div id="sc">000000</div><div id="cb">x1</div></div>
+  <div id="fb" style="opacity:0">PERFECT!</div>
+
+  <button id="kick" ontouchstart="hit()" ontouchend="unhit()"
+          onmousedown="hit()" onmouseup="unhit()">
+    <span>KICK</span>
+    <small id="khint">tik of schud</small>
+  </button>
+
+  <div class="mrow">
+    🌀
+    <input type="range" min="1" max="20" value="8" oninput="setSens(+this.value)">
+    <div class="mbar-bg"><div id="mbar"></div></div>
+  </div>
+  <div id="mlbl">—</div>
+</div>
+
+<script>
+'use strict';
+
+// ── iOS check ──
+const isIOS = typeof DeviceMotionEvent !== 'undefined'
+           && typeof DeviceMotionEvent.requestPermission === 'function';
+
+// skip permission screen on non-iOS
+if (!isIOS) { motionOK = true; show('pg-conn'); }
+let motionOK = false;
+
+function show(id) {
+  document.querySelectorAll('.pg').forEach(p => p.classList.remove('show'));
+  document.getElementById(id).classList.add('show');
+}
+
+// ── Permission (iOS only) ──
+function askPerm() {
+  DeviceMotionEvent.requestPermission()
+    .then(s => {
+      if (s === 'granted') {
+        motionOK = true;
+        document.getElementById('perm-note').textContent = '✓ Toegestaan!';
+        document.getElementById('perm-note').style.color = '#00ff88';
+      } else {
+        document.getElementById('perm-note').textContent = 'Geweigerd — gebruik de knop.';
+        document.getElementById('perm-note').style.color = '#ff9944';
+      }
+      setTimeout(() => show('pg-conn'), 800);
+    })
+    .catch(() => {
+      document.getElementById('perm-note').textContent = 'Niet beschikbaar.';
+      setTimeout(() => show('pg-conn'), 800);
+    });
+}
+function skipPerm() { show('pg-conn'); }
+
+// ── WebSocket relay ──
+const WS = 'wss://socketsbay.com/wss/v2/1/free/';
+let ws = null, code = '', seq = 0, reconnT = null;
+
+function setMsg(t, c) {
+  const el = document.getElementById('msg');
+  el.textContent = t; el.className = c || '';
+}
+
+function doConn() {
+  code = document.getElementById('code').value.replace(/\D/g,'');
+  if (code.length !== 6) { setMsg('Voer 6 cijfers in','err'); return; }
+  document.getElementById('conn-btn').disabled = true;
+  setMsg('Verbinden…');
+  openWS();
+}
+
+function openWS() {
+  if (ws) { try { ws.close(); } catch(e) {} }
+  clearTimeout(reconnT);
+  try { ws = new WebSocket(WS + '?room=hsh-' + code); }
+  catch(e) { setMsg('WebSocket mislukt','err'); document.getElementById('conn-btn').disabled=false; return; }
+
+  ws.onopen = () => {
+    setMsg('Wachten op spelscherm…');
+    send({t:'join'});
+  };
+
+  ws.onmessage = e => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (!m) return;
+    if (m.t === 'host') {
+      if (document.getElementById('pg-conn').classList.contains('show')) {
+        setMsg('Spelscherm gevonden ✓','ok');
+        setTimeout(() => goPlay(m), 700);
+      } else {
+        updateHUD(m);
+      }
+    }
+    if (m.t === 'fb') {
+      showFB(m.text, m.color);
+      updateHUD(m);
+    }
+  };
+
+  ws.onerror = () => { setMsg('Fout — opnieuw…','err'); reconnT=setTimeout(openWS,2500); };
+  ws.onclose = () => {
+    if (document.getElementById('pg-play').classList.contains('show')) {
+      document.getElementById('mlbl').textContent = '⚠ Verbroken — herstelpoging…';
+      reconnT = setTimeout(openWS, 2000);
+    }
+  };
+}
+
+function send(d) {
+  if (ws && ws.readyState === 1) try { ws.send(JSON.stringify(d)); } catch(e) {}
+}
+
+function goPlay(m) {
+  show('pg-play');
+  if (m) updateHUD(m);
+  startMotion();
+}
+
+function updateHUD(m) {
+  if (m.title) document.getElementById('info').textContent =
+    m.title + (m.bpm ? ' · ' + m.bpm + ' BPM' : '');
+  if (m.sc !== undefined) document.getElementById('sc').textContent =
+    String(m.sc).padStart(6,'0');
+  if (m.cb !== undefined) document.getElementById('cb').textContent =
+    'x' + m.cb;
+}
+
+function doDisc() {
+  send({t:'leave'});
+  if (ws) try { ws.close(); } catch(e) {}
+  ws = null; clearTimeout(reconnT);
+  stopMotion();
+  show('pg-conn');
+  document.getElementById('conn-btn').disabled = false;
+  setMsg('Klaar');
+}
+
+// ── Hit / tap ──
+let tapCD = false;
+function hit() {
+  doHit();
+  document.getElementById('kick').style.transform = 'scale(.91)';
+  document.getElementById('kick').style.background = 'rgba(255,0,128,.35)';
+  document.getElementById('kick').style.boxShadow = '0 0 50px rgba(255,0,128,.8)';
+}
+function unhit() {
+  document.getElementById('kick').style.transform = '';
+  document.getElementById('kick').style.background = '';
+  document.getElementById('kick').style.boxShadow = '';
+}
+function doHit() {
+  if (tapCD) return; tapCD = true; setTimeout(() => tapCD=false, 90);
+  send({t:'hit', seq: ++seq});
+  if (navigator.vibrate) navigator.vibrate(28);
+}
+
+// ── Motion ──
+let motionOn = false, motCD = false, lastM = 0, thr = 18;
+function setSens(v) { thr = Math.round(29 - v); }
+
+function startMotion() {
+  if (motionOn) return;
+  if (!motionOK || typeof DeviceMotionEvent === 'undefined') {
+    document.getElementById('mlbl').textContent = 'Gebruik de knop';
+    document.getElementById('khint').textContent = 'tik om te spelen';
+    return;
+  }
+  window.addEventListener('devicemotion', onMotion, {passive:true});
+  motionOn = true;
+  document.getElementById('mlbl').textContent = '✓ Schud op de kick';
+  document.getElementById('khint').textContent = 'schud of tik';
+}
+function stopMotion() {
+  if (!motionOn) return;
+  window.removeEventListener('devicemotion', onMotion);
+  motionOn = false;
+}
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity || e.acceleration;
+  if (!a) return;
+  const mag = Math.sqrt((a.x||0)**2+(a.y||0)**2+(a.z||0)**2);
+  const d = Math.abs(mag - lastM); lastM = mag;
+  const pct = Math.min(100, d/(thr*1.4)*100);
+  document.getElementById('mbar').style.width = pct+'%';
+  if (d > thr && !motCD) {
+    motCD = true; setTimeout(()=>motCD=false, 150);
+    doHit();
+  }
+}
+
+// ── Feedback ──
+let fbT = null;
+function showFB(txt, color) {
+  const el = document.getElementById('fb');
+  el.textContent = txt; el.style.color = color||'#fff'; el.style.opacity = '1';
+  clearTimeout(fbT); fbT = setTimeout(()=>el.style.opacity='0', 500);
+}
+
+// ── Pre-fill code from URL ──
+const urlCode = new URLSearchParams(location.search).get('code');
+if (urlCode) document.getElementById('code').value = urlCode;
+
+// Enter key
+document.getElementById('code').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doConn();
+});
+</script>
+</body>
+</html>
