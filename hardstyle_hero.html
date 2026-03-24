@@ -603,7 +603,10 @@ function startGame(){
   if(activeSong.audioBuf)playBuf(activeSong.audioBuf,0);
   gRun=true;gPaused=false;gLast=null;
   if(gRaf)cancelAnimationFrame(gRaf);
-  gRaf=requestAnimationFrame(gTick);
+  // Delay first tick by one frame so layout is complete and #hw has real height
+  requestAnimationFrame(()=>{
+    gRaf=requestAnimationFrame(gTick);
+  });
   mqttPublish('host',{type:'heartbeat',sc:0,cb:1,run:true,title:activeSong.title,bpm:activeSong.bpm});
 }
 function replaySong(){if(activeSong)startGame();}
@@ -611,20 +614,39 @@ function replaySong(){if(activeSong)startGame();}
 function gTick(ts){
   if(!gRun)return;if(gPaused){gRaf=requestAnimationFrame(gTick);return;}
   if(!gLast)gLast=ts;const dt=Math.min(ts-gLast,50);gLast=ts;gEl+=dt;
-  const hwH=document.getElementById('hw').clientHeight;
+  // Use clientHeight with fallback — if 0 (layout not ready) use 400px
+  const hwH=Math.max(200,document.getElementById('hw').clientHeight);
   const hitY=hwH-70;
   gPlayers.forEach(p=>{
-    const ppf=p.ppf,leadMs=hitY/(ppf*60/1000);
-    while(p.noteQ.length>0&&p.noteQ[0].ms<=gEl+leadMs)spawnNote(p,p.noteQ.shift());
-    p.liveN.forEach(n=>{
-      if(n.hit||n.miss)return;
-      n.y+=ppf;n.el.style.top=Math.round(n.y)+'px';
-      if(n.y>hitY+70){n.miss=true;n.el.style.opacity='0';setTimeout(()=>n.el.remove(),150);doMiss(p);}
-    });
+    // px per ms = ppf * 60 / 1000
+    const pxms=p.ppf*60/1000;
+    const leadMs=hitY/pxms;
+    // Spawn notes that should arrive at hitY within leadMs from now
+    while(p.noteQ.length>0&&p.noteQ[0].ms<=gEl+leadMs){
+      spawnNote(p,p.noteQ.shift());
+    }
+    // Move notes
+    for(let i=p.liveN.length-1;i>=0;i--){
+      const n=p.liveN[i];
+      if(n.hit||n.miss){
+        // Clean up resolved notes from array
+        p.liveN.splice(i,1);
+        continue;
+      }
+      n.y+=p.ppf;
+      n.el.style.top=Math.round(n.y)+'px';
+      if(n.y>hitY+70){
+        n.miss=true;
+        n.el.style.opacity='0';
+        setTimeout(()=>n.el.remove(),150);
+        doMiss(p);
+        p.liveN.splice(i,1);
+      }
+    }
   });
   const bMs=60000/activeSong.bpm;if(gEl%bMs<dt+6)BP=1;
   document.getElementById('pb-d').style.width=Math.min(gEl/gDur*100,100)+'%';
-  if(gEl>gDur+2000&&gPlayers.every(p=>p.liveN.every(n=>n.hit||n.miss))){endGame();return;}
+  if(gEl>gDur+2000&&gPlayers.every(p=>p.liveN.length===0&&p.noteQ.length===0)){endGame();return;}
   gRaf=requestAnimationFrame(gTick);
 }
 
@@ -644,7 +666,7 @@ function pressKey(playerIdx){
   const p=gPlayers[playerIdx];if(!p)return;
   if(p.kbEl)p.kbEl.classList.add('pr');
   if(!gRun||gPaused)return;
-  const hitY=document.getElementById('hw').clientHeight-70;
+  const hitY=Math.max(200,document.getElementById('hw').clientHeight)-70;
   const cands=p.liveN.filter(n=>!n.hit&&!n.miss);
   if(!cands.length){flashLane(p);return;}
   const best=cands.reduce((a,b)=>Math.abs(a.y-hitY)<Math.abs(b.y-hitY)?a:b);
@@ -660,7 +682,12 @@ function pressPlayerKey(playerId){
 }
 
 function doHit(p,note,perfect){
-  note.hit=true;note.el.style.opacity='0';note.el.style.transform='scaleY(0)';setTimeout(()=>note.el.remove(),80);
+  note.hit=true;
+  note.el.style.opacity='0';note.el.style.transform='scaleY(0)';
+  setTimeout(()=>note.el.remove(),80);
+  // Remove from liveN immediately
+  const idx=p.liveN.indexOf(note);
+  if(idx>=0)p.liveN.splice(idx,1);
   sfxHit(perfect,p.color);flashLane(p);BP=.6;
   p.sc+=(perfect?300:100)*p.cb;perfect?p.hp++:p.hg++;
   p.cb=Math.min(p.cb+1,20);p.maxCb=Math.max(p.maxCb,p.cb);
