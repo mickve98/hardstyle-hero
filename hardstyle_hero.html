@@ -198,7 +198,7 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
     <div class="tc" id="ed-tc">0:00.000</div>
     <div class="bpm-f">BPM <input type="number" id="ed-bpm" min="60" max="300" value="150" oninput="onBpmChange()"></div>
     <div class="nc">🎵 <span id="ncnt">0</span></div>
-    <button class="by"  onclick="autoGrid()">⚡ AUTO-GRID</button>
+    <button class="by"  onclick="detectKicks()">🥁 DETECTEER KICKS</button>
     <button class="bg"  onclick="undoLast()">↩ UNDO</button>
     <button class="bg"  onclick="clearAll()">✕ WIS</button>
     <button class="bg"  onclick="exportBeats()">💾 EXPORT</button>
@@ -489,13 +489,112 @@ function zoomOut(){if(zoomIdx<ZL.length-1){zoomIdx++;viewDur=ZL[zoomIdx];clampV(
 function clampV(){const dur=sDur();viewStart=Math.max(0,Math.min(dur-viewDur,viewStart));}
 function setSnap(el){edSnap=parseInt(el.dataset.s);document.querySelectorAll('.snap-grp .bsm').forEach(b=>b.classList.remove('on'));el.classList.add('on');}
 function onBpmChange(){edBpm=parseInt(document.getElementById('ed-bpm').value)||150;}
-function autoGrid(){
-  const dur=sDur(),beatMs=60000/edBpm,nn=[];
-  for(let ms=beatMs;ms<dur*1000-beatMs*.5;ms+=beatMs)nn.push({ms:Math.round(ms)});
-  if(!confirm(`AUTO-GRID: ${nn.length} noten op elk beat (${edBpm} BPM). Huidige noten vervangen?`))return;
-  saveHist();edNotes=nn;edGridOffset=0;
-  document.getElementById('off-sl').value=0;document.getElementById('off-val').textContent='0 ms';
-  updNC();
+async function detectKicks(){
+  if(!edSong?.audioBuf){ alert('Laad eerst een nummer.'); return; }
+  const btn = document.querySelector('[onclick="detectKicks()"]');
+  btn.textContent = '⏳ Analyseren…';
+  btn.disabled = true;
+  await new Promise(r => setTimeout(r, 40));
+  try {
+    const notes = await analyseKicks(edSong.audioBuf);
+    if(!notes.length){ alert('Geen kicks gevonden. Probeer een andere track.'); return; }
+    saveHist();
+    edNotes = notes;
+    edGridOffset = 0;
+    document.getElementById('off-sl').value = 0;
+    document.getElementById('off-val').textContent = '0 ms';
+    updNC();
+    alert(`✓ ${notes.length} kicks gedetecteerd!`);
+  } catch(e) {
+    alert('Detectie mislukt: ' + e.message);
+    console.error(e);
+  } finally {
+    btn.textContent = '🥁 DETECTEER KICKS';
+    btn.disabled = false;
+  }
+}
+
+async function analyseKicks(audioBuf){
+  const SR      = audioBuf.sampleRate;
+  const total   = audioBuf.length;
+  const numCh   = audioBuf.numberOfChannels;
+
+  // ── Step 1: Run audio through a bandpass filter (30-80 Hz) via OfflineAudioContext ──
+  const offline = new OfflineAudioContext(1, total, SR);
+
+  // Source
+  const src = offline.createBufferSource();
+  src.buffer = audioBuf;
+
+  // Low-pass at 80 Hz
+  const lpf = offline.createBiquadFilter();
+  lpf.type = 'lowpass';
+  lpf.frequency.value = 80;
+  lpf.Q.value = 0.7;
+
+  // High-pass at 30 Hz
+  const hpf = offline.createBiquadFilter();
+  hpf.type = 'highpass';
+  hpf.frequency.value = 30;
+  hpf.Q.value = 0.7;
+
+  src.connect(lpf);
+  lpf.connect(hpf);
+  hpf.connect(offline.destination);
+  src.start(0);
+
+  const filtered = await offline.startRendering();
+  const sig = filtered.getChannelData(0);
+
+  // ── Step 2: Full-wave rectify and compute energy in 10ms hops ──
+  const HOP_MS  = 10;
+  const hopSamp = Math.round(SR * HOP_MS / 1000);
+  const numHops = Math.floor(total / hopSamp);
+  const energy  = new Float32Array(numHops);
+
+  for(let h = 0; h < numHops; h++){
+    const start = h * hopSamp;
+    let sum = 0;
+    for(let i = start; i < start + hopSamp && i < total; i++){
+      sum += sig[i] * sig[i];
+    }
+    energy[h] = sum / hopSamp;
+  }
+
+  // ── Step 3: Compute onset strength (spectral flux on energy) ──
+  const flux = new Float32Array(numHops);
+  for(let i = 1; i < numHops; i++)
+    flux[i] = Math.max(0, energy[i] - energy[i-1]);
+
+  // ── Step 4: Adaptive threshold over a ±200ms window ──
+  const WIN     = Math.round(200 / HOP_MS);
+  const MULT    = 1.4;
+  const thresh  = new Float32Array(numHops);
+  for(let i = 0; i < numHops; i++){
+    let sum = 0, cnt = 0;
+    for(let j = Math.max(0,i-WIN); j <= Math.min(numHops-1,i+WIN); j++){
+      sum += flux[j]; cnt++;
+    }
+    thresh[i] = (sum / cnt) * MULT + 1e-6;
+  }
+
+  // ── Step 5: Peak picking with minimum distance ──
+  const MIN_MS   = 80;   // minimum gap between onsets (catches kickrolls down to ~750 BPM)
+  const minHops  = Math.round(MIN_MS / HOP_MS);
+  const notes    = [];
+  let lastHop    = -minHops;
+
+  for(let i = 1; i < numHops - 1; i++){
+    if( flux[i] > thresh[i] &&
+        flux[i] > flux[i-1] &&
+        flux[i] >= flux[i+1] &&
+        i - lastHop >= minHops ){
+      notes.push({ ms: Math.round(i * HOP_MS) });
+      lastHop = i;
+    }
+  }
+
+  return notes;
 }
 function onOffsetChange(v){edGridOffset=v;document.getElementById('off-val').textContent=(v>=0?'+':'')+v+' ms';}
 function resetOffset(){edGridOffset=0;document.getElementById('off-sl').value=0;document.getElementById('off-val').textContent='0 ms';}
@@ -511,7 +610,7 @@ function toggleEdPlay(){
   else{edPlaying=true;edPlayStart=actx.currentTime;if(edSong.audioBuf)playBuf(edSong.audioBuf,edPlayOff);document.getElementById('ed-pb').textContent='⏸';document.getElementById('ed-pb').classList.add('on');}
 }
 function seekTo(sec){const was=edPlaying;if(was){stopAudio();edPlaying=false;}edPlayOff=Math.max(0,Math.min(sDur(),sec));viewStart=Math.max(0,Math.min(sDur()-viewDur,sec-viewDur*0.15));clampV();if(was){edPlayStart=actx.currentTime;if(edSong.audioBuf)playBuf(edSong.audioBuf,edPlayOff);edPlaying=true;}}
-function goPlay(){if(!edNotes.length){alert('Geen noten! Klik op de waveform of AUTO-GRID.');return;}edSong.notes=[...edNotes];edSong.bpm=edBpm;activeSong=edSong;if(edRaf){cancelAnimationFrame(edRaf);edRaf=null;}stopAudio();edPlaying=false;renderList();startGame();}
+function goPlay(){if(!edNotes.length){alert('Geen noten! Klik op 🥁 DETECTEER KICKS of klik handmatig op de waveform.');return;}edSong.notes=[...edNotes];edSong.bpm=edBpm;activeSong=edSong;if(edRaf){cancelAnimationFrame(edRaf);edRaf=null;}stopAudio();edPlaying=false;renderList();startGame();}
 function goEditorFromResult(){if(activeSong)openEditor(activeSong);}
 function sDur(){return edSong?.audioBuf?.duration||(60000/edBpm*64/1000);}
 
