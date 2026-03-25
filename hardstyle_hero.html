@@ -167,6 +167,21 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
 .pl-diff{font-size:.55rem;opacity:.45;flex-shrink:0;}
 .pl-sc{font-family:'Orbitron',monospace;font-size:.68rem;color:var(--ye);}
 @keyframes fu{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+/* LEARN MODE */
+#learn-bar{display:none;align-items:center;gap:8px;padding:6px 11px;background:rgba(255,80,0,.1);border-bottom:1px solid rgba(255,120,0,.25);flex-shrink:0;flex-wrap:wrap;}
+#learn-bar.active{background:rgba(255,0,80,.16);border-color:rgba(255,0,128,.45);}
+.lbtn{padding:5px 12px;border:1px solid;font-family:'Orbitron',monospace;font-size:.58rem;letter-spacing:.06em;cursor:pointer;border-radius:2px;transition:all .14s;white-space:nowrap;background:transparent;}
+.lbtn.ye{border-color:var(--ye);color:var(--ye);}
+.lbtn.ye:hover{background:var(--ye);color:#000;}
+.lbtn.tap{background:var(--pk);border-color:var(--pk);color:#000;font-size:.78rem;padding:9px 24px;font-weight:900;}
+.lbtn.tap:active{transform:scale(.92);filter:brightness(1.5);}
+.lbtn.gr{border-color:var(--gr);color:var(--gr);}
+.lbtn.gr:hover{background:var(--gr);color:#000;}
+.lbtn.dim{border-color:rgba(255,255,255,.18);color:rgba(255,255,255,.3);}
+#learn-st{font-size:.6rem;color:rgba(255,255,255,.4);flex:1;min-width:100px;}
+#learn-ct{font-family:'Orbitron',monospace;font-size:.72rem;color:var(--pk);min-width:28px;}
+.tap-flash{animation:tapf .12s ease-out;}
+@keyframes tapf{0%{box-shadow:0 0 0 6px rgba(255,0,128,.6);}100%{box-shadow:0 0 0 0 transparent;}}
 </style>
 </head>
 <body>
@@ -199,6 +214,7 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
     <div class="bpm-f">BPM <input type="number" id="ed-bpm" min="60" max="300" value="150" oninput="onBpmChange()"></div>
     <div class="nc">🎵 <span id="ncnt">0</span></div>
     <button class="by"  onclick="detectKicks()">🥁 DETECTEER KICKS</button>
+    <button class="bg"  onclick="startLearn()" id="learn-btn">🎓 LEER VAN MIJ</button>
     <button class="bg"  onclick="undoLast()">↩ UNDO</button>
     <button class="bg"  onclick="clearAll()">✕ WIS</button>
     <button class="bg"  onclick="exportBeats()">💾 EXPORT</button>
@@ -213,6 +229,24 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
     <button class="bsm" onclick="resetOffset()">RESET</button>
     <button class="bsm on" onclick="applyOffset()" style="color:var(--gr);border-color:var(--gr);">✓ TOEPASSEN</button>
     <span style="font-size:.56rem;color:rgba(255,255,255,.18);">Schuif alle noten · rood = origineel</span>
+  </div>
+  <!-- Sensitivity -->
+  <div class="off-row" id="sens-row">
+    <label>GEVOELIGHEID</label>
+    <input type="range" id="sens-sl" min="1" max="10" value="3" step="1" oninput="onSensChange(+this.value)">
+    <span id="sens-val" style="font-family:'Orbitron',monospace;font-size:.66rem;color:var(--pk);min-width:18px;">3</span>
+    <span style="font-size:.56rem;color:rgba(255,255,255,.18);">
+      1–3 = alleen zware kicks · 4–6 = normaal · 7–10 = ook kickrolls
+    </span>
+    <button class="bsm on" onclick="detectKicks()" style="color:var(--ye);border-color:var(--ye);white-space:nowrap;">🥁 OPNIEUW DETECTEREN</button>
+  </div>
+  <!-- Learn mode bar -->
+  <div id="learn-bar">
+    <span id="learn-st">Speel de muziek af en tik op KICK bij elke kick die je hoort. Stop als je genoeg hebt getikt (min. 4).</span>
+    <span id="learn-ct">0 tiks</span>
+    <button class="lbtn tap" id="learn-tap-btn" onclick="learnTap()" style="display:none">KICK</button>
+    <button class="lbtn gr"  id="learn-apply-btn" onclick="learnApply()" style="display:none">✓ DETECTEER NU</button>
+    <button class="lbtn dim" onclick="learnCancel()">✕ ANNULEER</button>
   </div>
   <div class="ov-wrap" id="ov-wrap"><canvas id="ov-cv"></canvas><div id="ov-view"></div><div id="ov-ph"></div></div>
   <div class="wv-outer" id="wv-outer"><canvas id="wv-cv"></canvas><div id="wv-ph"></div><div id="wv-gh"></div></div>
@@ -393,15 +427,83 @@ function openEditor(song){
   if(edRaf)cancelAnimationFrame(edRaf);
   edRaf=requestAnimationFrame(edLoop);
 }
+// wvPeaks    = per-ms peak of raw signal (for full waveform background)
+// wvPeaksHi  = per-10ms peak (for overview)
+// wvBass     = per-ms RMS of 30-80 Hz filtered signal (kick envelope)
+// wvOnset    = per-ms onset flux (spike = kick attack)
+let wvBass = null, wvOnset = null;
+
 function buildPeaks(){
-  wvPeaks=null;wvPeaksHi=null;const buf=edSong?.audioBuf;if(!buf)return;
-  const ch=buf.getChannelData(0),SR=buf.sampleRate;
-  const hopMs=Math.floor(SR/1000),nMs=Math.floor(ch.length/hopMs);
+  wvPeaks=null; wvPeaksHi=null; wvBass=null; wvOnset=null;
+  const buf=edSong?.audioBuf; if(!buf) return;
+  const ch=buf.getChannelData(0), SR=buf.sampleRate;
+  const hopMs=Math.floor(SR/1000), nMs=Math.floor(ch.length/hopMs);
+
+  // Raw peaks (1ms resolution)
   wvPeaks=new Float32Array(nMs);
-  for(let i=0;i<nMs;i++){let mx=0;const b=i*hopMs;for(let j=0;j<hopMs;j++){const v=Math.abs(ch[b+j]||0);if(v>mx)mx=v;}wvPeaks[i]=mx;}
-  const hop10=hopMs*10,nHi=Math.floor(ch.length/hop10);
+  for(let i=0;i<nMs;i++){
+    let mx=0; const b=i*hopMs;
+    for(let j=0;j<hopMs;j++){const v=Math.abs(ch[b+j]||0);if(v>mx)mx=v;}
+    wvPeaks[i]=mx;
+  }
+  // Overview peaks (10ms resolution)
+  const hop10=hopMs*10, nHi=Math.floor(ch.length/hop10);
   wvPeaksHi=new Float32Array(nHi);
-  for(let i=0;i<nHi;i++){let mx=0;const b=i*hop10;for(let j=0;j<hop10;j++){const v=Math.abs(ch[b+j]||0);if(v>mx)mx=v;}wvPeaksHi[i]=mx;}
+  for(let i=0;i<nHi;i++){
+    let mx=0; const b=i*hop10;
+    for(let j=0;j<hop10;j++){const v=Math.abs(ch[b+j]||0);if(v>mx)mx=v;}
+    wvPeaksHi[i]=mx;
+  }
+  // Async: compute bass envelope + onset in background
+  buildBassEnvelope(buf, SR, nMs, hopMs);
+}
+
+async function buildBassEnvelope(buf, SR, nMs, hopMs){
+  try {
+    // Filter to 30-80 Hz via OfflineAudioContext
+    const offline = new OfflineAudioContext(1, buf.length, SR);
+    const src = offline.createBufferSource(); src.buffer = buf;
+    const lpf = offline.createBiquadFilter(); lpf.type='lowpass';  lpf.frequency.value=80; lpf.Q.value=0.5;
+    const hpf = offline.createBiquadFilter(); hpf.type='highpass'; hpf.frequency.value=25; hpf.Q.value=0.5;
+    src.connect(lpf); lpf.connect(hpf); hpf.connect(offline.destination); src.start(0);
+    const filtered = await offline.startRendering();
+    const fc = filtered.getChannelData(0);
+
+    // Per-ms RMS of filtered signal
+    const bass = new Float32Array(nMs);
+    for(let i=0;i<nMs;i++){
+      let sum=0; const b=i*hopMs;
+      for(let j=0;j<hopMs;j++){const v=fc[b+j]||0; sum+=v*v;}
+      bass[i]=Math.sqrt(sum/hopMs);
+    }
+
+    // Smooth bass envelope with a short attack/slow release follower (5ms attack, 80ms release)
+    const env = new Float32Array(nMs);
+    const atk = Math.exp(-1/(0.005*1000)); // attack  ~5ms
+    const rel = Math.exp(-1/(0.08*1000));  // release ~80ms
+    let cur = 0;
+    for(let i=0;i<nMs;i++){
+      const v=bass[i];
+      cur = v > cur ? atk*cur + (1-atk)*v : rel*cur + (1-rel)*v;
+      env[i]=cur;
+    }
+
+    // Onset flux: positive delta of envelope (attack transients only)
+    const onset = new Float32Array(nMs);
+    for(let i=1;i<nMs;i++)
+      onset[i] = Math.max(0, env[i] - env[i-1]);
+
+    // Normalize both
+    let maxE=0, maxO=0;
+    for(let i=0;i<nMs;i++){if(env[i]>maxE)maxE=env[i]; if(onset[i]>maxO)maxO=onset[i];}
+    if(maxE>0) for(let i=0;i<nMs;i++) env[i]/=maxE;
+    if(maxO>0) for(let i=0;i<nMs;i++) onset[i]/=maxO;
+
+    wvBass  = env;
+    wvOnset = onset;
+  } catch(e) {
+    console.warn('Bass envelope failed:', e);
+  }
 }
 function edLoop(){drawOv();drawZm();updEdUI();edRaf=requestAnimationFrame(edLoop);}
 function edCT(){return edPlaying?edPlayOff+(actx.currentTime-edPlayStart):edPlayOff;}
@@ -418,8 +520,26 @@ function drawOv(){
   if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
   const cx=cv.getContext('2d');cx.fillStyle='#030009';cx.fillRect(0,0,W,H);
   const dur=sDur();
-  if(wvPeaksHi){cx.beginPath();const mid=H/2;for(let i=0;i<wvPeaksHi.length;i++){const x=i/wvPeaksHi.length*W,h=wvPeaksHi[i]*mid*.9;cx.moveTo(x,mid-h);cx.lineTo(x,mid+h);}cx.strokeStyle='rgba(0,245,255,.28)';cx.lineWidth=1;cx.stroke();}
-  edNotes.forEach(n=>{const x=(n.ms+edGridOffset)/1000/dur*W;cx.fillStyle='rgba(255,238,0,.65)';cx.fillRect(x-1,0,2,H);});
+  // Full waveform dim
+  if(wvPeaksHi){
+    cx.beginPath();const mid=H/2;
+    for(let i=0;i<wvPeaksHi.length;i++){const x=i/wvPeaksHi.length*W,h=wvPeaksHi[i]*mid*.7;cx.moveTo(x,mid-h);cx.lineTo(x,mid+h);}
+    cx.strokeStyle='rgba(0,245,255,.18)';cx.lineWidth=1;cx.stroke();
+  }
+  // Bass envelope from bottom
+  if(wvBass){
+    cx.beginPath();cx.moveTo(0,H);
+    const step=Math.max(1,Math.floor(wvBass.length/W));
+    for(let x=0;x<W;x++){
+      const i=Math.floor(x/W*wvBass.length);
+      const v=wvBass[Math.min(i,wvBass.length-1)]||0;
+      cx.lineTo(x,H-v*H*0.9);
+    }
+    cx.lineTo(W,H);cx.closePath();
+    cx.fillStyle='rgba(255,80,0,.3)';cx.fill();
+  }
+  // Note markers
+  edNotes.forEach(n=>{const x=(n.ms+edGridOffset)/1000/dur*W;cx.fillStyle='rgba(255,238,0,.7)';cx.fillRect(x-1,0,2,H);});
   const vx=viewStart/dur*W,vw=viewDur/dur*W;
   document.getElementById('ov-view').style.left=vx+'px';
   document.getElementById('ov-view').style.width=Math.max(4,vw)+'px';
@@ -429,32 +549,121 @@ function drawZm(){
   const W=outer.clientWidth,H=outer.clientHeight;if(!W||!H)return;
   if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
   cv.style.width=W+'px';cv.style.height=H+'px';cv.style.left='0px';
-  const cx=cv.getContext('2d');cx.fillStyle='#05000f';cx.fillRect(0,0,W,H);
+  const cx=cv.getContext('2d');
+  cx.fillStyle='#04000e';cx.fillRect(0,0,W,H);
+
   const dur=sDur(),vEnd=viewStart+viewDur,s2x=s=>(s-viewStart)/viewDur*W;
+
+  // ── Beat grid ──
   const bSec=60/edBpm,fB=Math.floor(viewStart/bSec)*bSec;
   for(let b=fB;b<=vEnd+bSec;b+=bSec){
     const bn=Math.round(b/bSec),x=s2x(b),isMeas=bn%4===0;
-    cx.strokeStyle=isMeas?'rgba(255,238,0,.32)':'rgba(255,255,255,.09)';cx.lineWidth=isMeas?1.5:1;
+    cx.strokeStyle=isMeas?'rgba(255,238,0,.28)':'rgba(255,255,255,.07)';
+    cx.lineWidth=isMeas?1.5:1;
     cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();
-    if(viewDur<15){cx.fillStyle=isMeas?'rgba(255,238,0,.55)':'rgba(255,255,255,.15)';cx.font=`${isMeas?10:8}px monospace`;cx.fillText(bn+1,x+3,11);}
-    if(edSnap>=2&&viewDur<8){for(let sub=1;sub<edSnap;sub++){const sx=s2x(b+sub*(bSec/edSnap));cx.strokeStyle='rgba(255,80,80,.1)';cx.lineWidth=1;cx.beginPath();cx.moveTo(sx,0);cx.lineTo(sx,H*.35);cx.stroke();}}
+    if(viewDur<15){
+      cx.fillStyle=isMeas?'rgba(255,238,0,.5)':'rgba(255,255,255,.13)';
+      cx.font=`${isMeas?10:8}px monospace`;
+      cx.fillText(bn+1,x+3,11);
+    }
+    if(edSnap>=2&&viewDur<8){
+      for(let sub=1;sub<edSnap;sub++){
+        const sx=s2x(b+sub*(bSec/edSnap));
+        cx.strokeStyle='rgba(255,80,80,.09)';cx.lineWidth=1;
+        cx.beginPath();cx.moveTo(sx,0);cx.lineTo(sx,H*.3);cx.stroke();
+      }
+    }
   }
-  if(wvPeaks){const mid=H/2;cx.beginPath();for(let x=0;x<W;x++){const t=viewStart+x/W*viewDur,i=Math.floor(t*1000),v=wvPeaks[Math.min(i,wvPeaks.length-1)]||0,h=v*mid*.92;cx.moveTo(x,mid-h);cx.lineTo(x,mid+h);}cx.strokeStyle='rgba(0,245,255,.52)';cx.lineWidth=1;cx.stroke();}
-  // Shifted notes (yellow)
+
+  // ── Layer 1: full waveform (dim, background context) ──
+  if(wvPeaks){
+    const mid=H*0.5;
+    cx.beginPath();
+    for(let x=0;x<W;x++){
+      const t=viewStart+x/W*viewDur,i=Math.floor(t*1000);
+      const v=wvPeaks[Math.min(i,wvPeaks.length-1)]||0;
+      const h=v*mid*0.55;
+      cx.moveTo(x,mid-h);cx.lineTo(x,mid+h);
+    }
+    cx.strokeStyle='rgba(0,245,255,.18)';cx.lineWidth=1;cx.stroke();
+  }
+
+  // ── Layer 2: bass envelope (30-80 Hz) — bright filled area from bottom ──
+  if(wvBass){
+    // Draw as filled area at bottom half, so kicks look like columns rising up
+    cx.beginPath();
+    cx.moveTo(0,H);
+    for(let x=0;x<W;x++){
+      const t=viewStart+x/W*viewDur,i=Math.floor(t*1000);
+      const v=wvBass[Math.min(i,wvBass.length-1)]||0;
+      cx.lineTo(x, H - v*H*0.55);
+    }
+    cx.lineTo(W,H);cx.closePath();
+    const grad=cx.createLinearGradient(0,H*0.45,0,H);
+    grad.addColorStop(0,'rgba(255,80,0,.55)');
+    grad.addColorStop(1,'rgba(255,80,0,.04)');
+    cx.fillStyle=grad;cx.fill();
+    // Outline
+    cx.beginPath();
+    for(let x=0;x<W;x++){
+      const t=viewStart+x/W*viewDur,i=Math.floor(t*1000);
+      const v=wvBass[Math.min(i,wvBass.length-1)]||0;
+      if(x===0)cx.moveTo(x,H-v*H*0.55);else cx.lineTo(x,H-v*H*0.55);
+    }
+    cx.strokeStyle='rgba(255,120,0,.7)';cx.lineWidth=1.5;cx.stroke();
+  }
+
+  // ── Layer 3: onset flux spikes (kick attacks) — sharp vertical spikes from top ──
+  if(wvOnset){
+    cx.beginPath();
+    for(let x=0;x<W;x++){
+      const t=viewStart+x/W*viewDur,i=Math.floor(t*1000);
+      const v=wvOnset[Math.min(i,wvOnset.length-1)]||0;
+      if(v>0.05){
+        const h=v*H*0.7;
+        cx.moveTo(x,0);cx.lineTo(x,h);
+      }
+    }
+    cx.strokeStyle='rgba(255,0,128,.65)';cx.lineWidth=1;cx.stroke();
+  }
+
+  // ── Notes (yellow markers) ──
   edNotes.forEach((n,idx)=>{
     const t=(n.ms+edGridOffset)/1000;if(t<viewStart-.01||t>vEnd+.01)return;
     const x=s2x(t);
-    const gr=cx.createLinearGradient(x-8,0,x+8,0);gr.addColorStop(0,'transparent');gr.addColorStop(.5,'rgba(255,238,0,.2)');gr.addColorStop(1,'transparent');cx.fillStyle=gr;cx.fillRect(x-8,0,16,H);
-    cx.strokeStyle='#ffee00';cx.lineWidth=2;cx.shadowColor='#ffee00';cx.shadowBlur=5;cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();cx.shadowBlur=0;
-    cx.fillStyle='#ffee00';cx.beginPath();cx.moveTo(x-4,0);cx.lineTo(x+4,0);cx.lineTo(x,7);cx.fill();
-    if(viewDur<10){cx.fillStyle='rgba(0,0,0,.7)';cx.fillRect(x-9,9,18,12);cx.fillStyle='#ffee00';cx.font='bold 8px monospace';cx.textAlign='center';cx.fillText(idx+1,x,19);cx.textAlign='left';}
+    // Glow column
+    const gr=cx.createLinearGradient(x-6,0,x+6,0);
+    gr.addColorStop(0,'transparent');gr.addColorStop(.5,'rgba(255,238,0,.18)');gr.addColorStop(1,'transparent');
+    cx.fillStyle=gr;cx.fillRect(x-6,0,12,H);
+    // Main line
+    cx.strokeStyle='#ffee00';cx.lineWidth=2;
+    cx.shadowColor='#ffee00';cx.shadowBlur=6;
+    cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();
+    cx.shadowBlur=0;
+    // Triangle top
+    cx.fillStyle='#ffee00';
+    cx.beginPath();cx.moveTo(x-4,0);cx.lineTo(x+4,0);cx.lineTo(x,8);cx.fill();
+    // Number label
+    if(viewDur<10){
+      cx.fillStyle='rgba(0,0,0,.75)';cx.fillRect(x-9,9,18,12);
+      cx.fillStyle='#ffee00';cx.font='bold 8px monospace';
+      cx.textAlign='center';cx.fillText(idx+1,x,19);cx.textAlign='left';
+    }
   });
-  // Original positions as ghost (red dashes) when offset active
+
+  // ── Ghost notes (offset preview) ──
   if(edGridOffset!==0){
     cx.setLineDash([3,3]);
-    edNotes.forEach(n=>{const t=n.ms/1000;if(t<viewStart-.01||t>vEnd+.01)return;const x=s2x(t);cx.strokeStyle='rgba(255,80,80,.35)';cx.lineWidth=1;cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();});
+    edNotes.forEach(n=>{
+      const t=n.ms/1000;if(t<viewStart-.01||t>vEnd+.01)return;
+      const x=s2x(t);
+      cx.strokeStyle='rgba(255,80,80,.32)';cx.lineWidth=1;
+      cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();
+    });
     cx.setLineDash([]);
   }
+
+  // ── Playhead ──
   document.getElementById('wv-ph').style.left=s2x(edCT())+'px';
 }
 function updSB(){
@@ -496,7 +705,7 @@ async function detectKicks(){
   btn.disabled = true;
   await new Promise(r => setTimeout(r, 40));
   try {
-    const notes = await analyseKicks(edSong.audioBuf);
+    const notes = await analyseKicks(edSong.audioBuf, kickSens);
     if(!notes.length){ alert('Geen kicks gevonden. Probeer een andere track.'); return; }
     saveHist();
     edNotes = notes;
@@ -514,90 +723,320 @@ async function detectKicks(){
   }
 }
 
-async function analyseKicks(audioBuf){
-  const SR      = audioBuf.sampleRate;
-  const total   = audioBuf.length;
-  const numCh   = audioBuf.numberOfChannels;
+async function analyseKicks(audioBuf, sens=3){
+  const SR    = audioBuf.sampleRate;
+  const total = audioBuf.length;
 
-  // ── Step 1: Run audio through a bandpass filter (30-80 Hz) via OfflineAudioContext ──
+  // ── Rebuild the exact same bass envelope used for the orange display ──
+  // (wvBass may not be ready yet if called early, so we always recompute here)
   const offline = new OfflineAudioContext(1, total, SR);
-
-  // Source
-  const src = offline.createBufferSource();
-  src.buffer = audioBuf;
-
-  // Low-pass at 80 Hz
-  const lpf = offline.createBiquadFilter();
-  lpf.type = 'lowpass';
-  lpf.frequency.value = 80;
-  lpf.Q.value = 0.7;
-
-  // High-pass at 30 Hz
-  const hpf = offline.createBiquadFilter();
-  hpf.type = 'highpass';
-  hpf.frequency.value = 30;
-  hpf.Q.value = 0.7;
-
-  src.connect(lpf);
-  lpf.connect(hpf);
-  hpf.connect(offline.destination);
-  src.start(0);
-
+  const src = offline.createBufferSource(); src.buffer = audioBuf;
+  const lpf = offline.createBiquadFilter(); lpf.type='lowpass';  lpf.frequency.value=80; lpf.Q.value=0.5;
+  const hpf = offline.createBiquadFilter(); hpf.type='highpass'; hpf.frequency.value=25; hpf.Q.value=0.5;
+  src.connect(lpf); lpf.connect(hpf); hpf.connect(offline.destination); src.start(0);
   const filtered = await offline.startRendering();
-  const sig = filtered.getChannelData(0);
+  const fc = filtered.getChannelData(0);
 
-  // ── Step 2: Full-wave rectify and compute energy in 10ms hops ──
-  const HOP_MS  = 10;
-  const hopSamp = Math.round(SR * HOP_MS / 1000);
-  const numHops = Math.floor(total / hopSamp);
-  const energy  = new Float32Array(numHops);
-
-  for(let h = 0; h < numHops; h++){
-    const start = h * hopSamp;
-    let sum = 0;
-    for(let i = start; i < start + hopSamp && i < total; i++){
-      sum += sig[i] * sig[i];
-    }
-    energy[h] = sum / hopSamp;
+  // Per-ms RMS  (same as buildBassEnvelope)
+  const hopSamp = Math.floor(SR/1000);
+  const nMs     = Math.floor(total/hopSamp);
+  const rms     = new Float32Array(nMs);
+  for(let i=0; i<nMs; i++){
+    let sum=0, b=i*hopSamp;
+    for(let j=0; j<hopSamp && b+j<total; j++){ const v=fc[b+j]; sum+=v*v; }
+    rms[i] = Math.sqrt(sum/hopSamp);
   }
 
-  // ── Step 3: Compute onset strength (spectral flux on energy) ──
-  const flux = new Float32Array(numHops);
-  for(let i = 1; i < numHops; i++)
-    flux[i] = Math.max(0, energy[i] - energy[i-1]);
-
-  // ── Step 4: Adaptive threshold over a ±200ms window ──
-  const WIN     = Math.round(200 / HOP_MS);
-  const MULT    = 1.4;
-  const thresh  = new Float32Array(numHops);
-  for(let i = 0; i < numHops; i++){
-    let sum = 0, cnt = 0;
-    for(let j = Math.max(0,i-WIN); j <= Math.min(numHops-1,i+WIN); j++){
-      sum += flux[j]; cnt++;
-    }
-    thresh[i] = (sum / cnt) * MULT + 1e-6;
+  // Attack/release envelope follower  (same as buildBassEnvelope → this IS the orange line)
+  const env = new Float32Array(nMs);
+  const atk = Math.exp(-1/(0.005*1000));
+  const rel = Math.exp(-1/(0.08*1000));
+  let cur=0;
+  for(let i=0; i<nMs; i++){
+    cur = rms[i] > cur ? atk*cur+(1-atk)*rms[i] : rel*cur+(1-rel)*rms[i];
+    env[i] = cur;
   }
 
-  // ── Step 5: Peak picking with minimum distance ──
-  const MIN_MS   = 80;   // minimum gap between onsets (catches kickrolls down to ~750 BPM)
-  const minHops  = Math.round(MIN_MS / HOP_MS);
+  // ── Sensitivity → search window and threshold ──
+  // halfWin: how wide a "mountain" to look for (narrow = catches close rolls)
+  // threshFactor: how much above local floor counts as a peak
+  const halfWin     = Math.round(80 - (sens-1)*7);          // 80ms → 17ms
+  const threshFactor= 1.0 + (0.8 - (sens-1)*0.07);         // 1.8  → 1.17  above local min
+
+  // ── Find local maxima on the orange envelope ──
+  // For each candidate peak: it must be the highest point within ±halfWin,
+  // AND it must exceed the lowest point within ±halfWin by threshFactor.
+  // This directly mirrors what the eye sees as "mountain tops" on the orange curve.
+  const minGapMs = Math.round(200 - (sens-1)*14);           // 200ms → 74ms
   const notes    = [];
-  let lastHop    = -minHops;
+  let lastPeak   = -minGapMs;
 
-  for(let i = 1; i < numHops - 1; i++){
-    if( flux[i] > thresh[i] &&
-        flux[i] > flux[i-1] &&
-        flux[i] >= flux[i+1] &&
-        i - lastHop >= minHops ){
-      notes.push({ ms: Math.round(i * HOP_MS) });
-      lastHop = i;
+  for(let i=halfWin; i<nMs-halfWin; i++){
+    // 1. Must be local maximum
+    let isMax = true;
+    for(let j=i-halfWin; j<=i+halfWin; j++){
+      if(env[j] > env[i]){ isMax=false; break; }
     }
+    if(!isMax) continue;
+
+    // 2. Peak must be significantly higher than the valley around it
+    let localMin = env[i];
+    for(let j=i-halfWin; j<=i+halfWin; j++)
+      if(env[j] < localMin) localMin = env[j];
+    if(env[i] < localMin * threshFactor) continue;
+
+    // 3. Minimum gap between kicks
+    if(i - lastPeak < minGapMs) continue;
+
+    // 4. Snap to the exact onset: steepest rising slope in the 30ms before peak
+    let onsetMs=i, maxSlope=0;
+    for(let j=Math.max(0,i-30); j<i; j++){
+      const slope = env[j+1]-env[j];
+      if(slope > maxSlope){ maxSlope=slope; onsetMs=j; }
+    }
+
+    notes.push({ms: onsetMs});
+    lastPeak = i;
   }
 
   return notes;
 }
 function onOffsetChange(v){edGridOffset=v;document.getElementById('off-val').textContent=(v>=0?'+':'')+v+' ms';}
 function resetOffset(){edGridOffset=0;document.getElementById('off-sl').value=0;document.getElementById('off-val').textContent='0 ms';}
+
+let kickSens = 3;
+function onSensChange(v){ kickSens=v; document.getElementById('sens-val').textContent=v; }
+
+// ═══════════════════════════════════════════════════════
+//  LEARN SYSTEM
+//  User taps along to music → we extract envelope features
+//  at each tap → build a kick "fingerprint" → match across track
+// ═══════════════════════════════════════════════════════
+let learnMode   = false;
+let learnTaps   = [];   // [{ms, audioTime}] — times user tapped
+let learnEnv    = null; // bass envelope of current song (Float32Array, 1ms/sample)
+let kickTemplate= null; // learned fingerprint
+
+function startLearn(){
+  if(!edSong?.audioBuf){ alert('Laad eerst een nummer.'); return; }
+  ensureCtx();
+  // Build bass envelope if not ready
+  if(!wvBass){
+    alert('Wacht even — de waveform wordt nog berekend. Probeer het over een paar seconden opnieuw.');
+    return;
+  }
+  learnMode = true;
+  learnTaps = [];
+  learnEnv  = null;
+  document.getElementById('learn-bar').style.display = 'flex';
+  document.getElementById('learn-bar').classList.remove('active');
+  document.getElementById('learn-tap-btn').style.display = 'none';
+  document.getElementById('learn-apply-btn').style.display = 'none';
+  document.getElementById('learn-btn').style.display = 'none';
+  document.getElementById('learn-st').textContent =
+    'Klik ▶ PLAY om muziek te starten, daarna verschijnt de KICK knop.';
+  document.getElementById('learn-ct').textContent = '0 tiks';
+  // Start playback if not playing
+  if(!edPlaying) toggleEdPlay();
+  // Wait a moment then show tap button
+  setTimeout(()=>{
+    document.getElementById('learn-bar').classList.add('active');
+    document.getElementById('learn-tap-btn').style.display = 'inline-block';
+    document.getElementById('learn-st').textContent =
+      'Tik KICK op elke kick die je hoort. Stop na een paar maten (min. 4 tiks).';
+  }, 400);
+}
+
+function learnTap(){
+  if(!learnMode) return;
+  // Record the current playback position
+  const ms = Math.round(edCT() * 1000);
+  learnTaps.push(ms);
+  const n = learnTaps.length;
+  document.getElementById('learn-ct').textContent = n + ' tik' + (n===1?'':'s');
+
+  // Visual flash
+  const btn = document.getElementById('learn-tap-btn');
+  btn.classList.remove('tap-flash');
+  void btn.offsetWidth;
+  btn.classList.add('tap-flash');
+
+  // Show apply button once we have enough
+  if(n >= 4){
+    document.getElementById('learn-apply-btn').style.display = 'inline-block';
+    document.getElementById('learn-st').textContent =
+      n + ' kicks geleerd. Tik door of klik ✓ DETECTEER NU.';
+  }
+}
+
+async function learnApply(){
+  if(learnTaps.length < 4){
+    alert('Tik minstens 4 kicks voor een goed resultaat.');
+    return;
+  }
+  // Stop playback
+  if(edPlaying) toggleEdPlay();
+  document.getElementById('learn-st').textContent = '⏳ Analyseren op basis van jouw tiks…';
+  document.getElementById('learn-tap-btn').style.display = 'none';
+  document.getElementById('learn-apply-btn').style.display = 'none';
+  await new Promise(r=>setTimeout(r,30));
+
+  try {
+    const notes = await learnAndDetect(edSong.audioBuf, learnTaps);
+    if(!notes.length){ alert('Geen kicks gevonden op basis van jouw tiks.'); learnCancel(); return; }
+    saveHist();
+    edNotes = notes;
+    edGridOffset = 0;
+    document.getElementById('off-sl').value = 0;
+    document.getElementById('off-val').textContent = '0 ms';
+    updNC();
+    learnCancel();
+    alert(`✓ ${notes.length} kicks gevonden op basis van ${learnTaps.length} tiks!`);
+  } catch(e){
+    alert('Fout: ' + e.message);
+    console.error(e);
+    learnCancel();
+  }
+}
+
+function learnCancel(){
+  learnMode = false;
+  learnTaps = [];
+  document.getElementById('learn-bar').style.display = 'none';
+  document.getElementById('learn-bar').classList.remove('active');
+  document.getElementById('learn-btn').style.display = 'inline-block';
+  if(edPlaying) toggleEdPlay();
+}
+
+// Space bar also triggers tap during learn mode
+document.addEventListener('keydown', e=>{
+  if(learnMode && (e.code==='Space'||e.code==='KeyT') && e.target.tagName!=='INPUT'){
+    e.preventDefault();
+    learnTap();
+  }
+});
+
+async function learnAndDetect(audioBuf, tapTimesMs){
+  const SR    = audioBuf.sampleRate;
+  const total = audioBuf.length;
+
+  // ── Rebuild bass envelope (same as orange display) ──
+  const offline = new OfflineAudioContext(1, total, SR);
+  const src = offline.createBufferSource(); src.buffer = audioBuf;
+  const lpf = offline.createBiquadFilter(); lpf.type='lowpass';  lpf.frequency.value=80; lpf.Q.value=0.5;
+  const hpf = offline.createBiquadFilter(); hpf.type='highpass'; hpf.frequency.value=25; hpf.Q.value=0.5;
+  src.connect(lpf); lpf.connect(hpf); hpf.connect(offline.destination); src.start(0);
+  const filtered = await offline.startRendering();
+  const fc = filtered.getChannelData(0);
+
+  const hopSamp = Math.floor(SR/1000);
+  const nMs     = Math.floor(total/hopSamp);
+  const rms     = new Float32Array(nMs);
+  for(let i=0;i<nMs;i++){
+    let sum=0,b=i*hopSamp;
+    for(let j=0;j<hopSamp&&b+j<total;j++){const v=fc[b+j];sum+=v*v;}
+    rms[i]=Math.sqrt(sum/hopSamp);
+  }
+  // Envelope follower
+  const env = new Float32Array(nMs);
+  const atk = Math.exp(-1/(0.005*1000));
+  const rel = Math.exp(-1/(0.08*1000));
+  let cur=0;
+  for(let i=0;i<nMs;i++){
+    cur = rms[i]>cur ? atk*cur+(1-atk)*rms[i] : rel*cur+(1-rel)*rms[i];
+    env[i]=cur;
+  }
+
+  // ── For each tap: find the nearest local peak on the envelope (±40ms) ──
+  // This corrects for human timing imprecision
+  const SNAP = 40;
+  const tapPeaks = [];
+  for(const tapMs of tapTimesMs){
+    const lo = Math.max(0,  tapMs - SNAP);
+    const hi = Math.min(nMs-1, tapMs + SNAP);
+    let bestI=lo, bestV=env[lo];
+    for(let i=lo;i<=hi;i++) if(env[i]>bestV){bestV=env[i];bestI=i;}
+    // Only accept if this looks like a real peak (local max within ±20ms)
+    let isMax=true;
+    for(let j=Math.max(0,bestI-20);j<=Math.min(nMs-1,bestI+20);j++)
+      if(env[j]>env[bestI]){isMax=false;break;}
+    if(isMax) tapPeaks.push(bestI);
+  }
+  if(tapPeaks.length < 2) throw new Error('Te weinig taps herkend op de waveform');
+
+  // ── Extract template: shape of env around each tapped peak ──
+  // Template = average envelope shape in a ±60ms window around each peak (normalized)
+  const TMPL_W = 60; // ms either side
+  const tmplLen = TMPL_W*2 + 1;
+  const tmplSum = new Float64Array(tmplLen);
+  let tmplCount = 0;
+  for(const pk of tapPeaks){
+    if(pk-TMPL_W < 0 || pk+TMPL_W >= nMs) continue;
+    const peakVal = env[pk];
+    if(peakVal < 1e-6) continue;
+    for(let k=0;k<tmplLen;k++) tmplSum[k] += env[pk-TMPL_W+k] / peakVal;
+    tmplCount++;
+  }
+  if(tmplCount < 1) throw new Error('Geen bruikbare taps gevonden');
+  const tmpl = new Float32Array(tmplLen);
+  for(let k=0;k<tmplLen;k++) tmpl[k] = tmplSum[k] / tmplCount;
+
+  // ── Compute template match score across whole track ──
+  // Score at position i = normalized cross-correlation of env[i-W..i+W] with tmpl
+  // We only compute at local maxima to save time
+  const score = new Float32Array(nMs);
+  for(let i=TMPL_W;i<nMs-TMPL_W;i++){
+    const peakVal = env[i]; if(peakVal < 1e-7) continue;
+    let dot=0, envNorm=0, tmplNorm=0;
+    for(let k=0;k<tmplLen;k++){
+      const e=env[i-TMPL_W+k]/peakVal;
+      const t=tmpl[k];
+      dot+=e*t; envNorm+=e*e; tmplNorm+=t*t;
+    }
+    score[i] = dot / (Math.sqrt(envNorm*tmplNorm)+1e-9);
+  }
+
+  // ── Estimate inter-kick interval from taps ──
+  const intervals=[];
+  const sorted=[...tapPeaks].sort((a,b)=>a-b);
+  for(let i=1;i<sorted.length;i++) intervals.push(sorted[i]-sorted[i-1]);
+  // Median interval
+  intervals.sort((a,b)=>a-b);
+  const medInterval = intervals[Math.floor(intervals.length/2)];
+
+  // ── Compute similarity threshold ──
+  // Score at the tap positions gives us a "reference" quality.
+  // Threshold = mean score at taps × 0.65  (allows softer kicks)
+  let tapScoreSum=0;
+  for(const pk of tapPeaks) tapScoreSum += score[pk];
+  const scoreThresh = (tapScoreSum/tapPeaks.length) * 0.65;
+
+  // ── Minimum gap: half the median interval (catches rolls) ──
+  const minGapMs = Math.round(medInterval * 0.45);
+
+  // ── Peak pick on score ──
+  const WIN = Math.round(medInterval * 0.4);
+  const notes=[];
+  let lastPeak=-minGapMs;
+
+  for(let i=WIN;i<nMs-WIN;i++){
+    if(score[i] < scoreThresh) continue;
+    if(i-lastPeak < minGapMs) continue;
+    let isMax=true;
+    for(let j=i-WIN;j<=i+WIN;j++) if(score[j]>score[i]){isMax=false;break;}
+    if(!isMax) continue;
+    // Snap to steepest onset
+    let onsetMs=i, maxSlope=0;
+    for(let j=Math.max(0,i-25);j<i;j++){
+      const sl=env[j+1]-env[j];
+      if(sl>maxSlope){maxSlope=sl;onsetMs=j;}
+    }
+    notes.push({ms:onsetMs});
+    lastPeak=i;
+  }
+
+  return notes;
+}
 function applyOffset(){
   if(edGridOffset===0)return;saveHist();
   const dur=sDur()*1000;
