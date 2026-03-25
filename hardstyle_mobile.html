@@ -30,16 +30,6 @@ button.btn:active { opacity:.7; }
 button.btn:disabled { opacity:.3; }
 .pink  { background:#ff0080; color:#000; }
 .dim   { background:transparent !important; border:1px solid rgba(255,255,255,.2) !important; color:rgba(255,255,255,.4); font-size:.8rem; }
-/* difficulty buttons */
-.diff-row { display:flex; gap:8px; }
-.d-btn {
-  flex:1; padding:10px 6px; border:2px solid rgba(255,255,255,.18);
-  background:transparent; color:rgba(255,255,255,.4);
-  font-size:.75rem; font-weight:700; letter-spacing:.08em;
-  cursor:pointer; border-radius:4px; -webkit-appearance:none;
-  transition:all .15s;
-}
-.d-btn.on { color:#000; }
 #msg { font-size:.8rem; min-height:1.2em; }
 #msg.ok  { color:#00ff88; }
 #msg.err { color:#ff5555; }
@@ -97,11 +87,6 @@ button.btn:disabled { opacity:.3; }
   <h1>HARDSTYLE HERO</h1>
   <p>Vul je naam in, kies moeilijkheid en voer de spelcode in</p>
   <input type="text" id="pname" placeholder="Jouw naam" maxlength="14" autocomplete="off" spellcheck="false">
-  <div class="diff-row" id="diff-row">
-    <button class="d-btn" data-d="easy"   style="border-color:#00ff88;color:#00ff88" onclick="selDiff(this)">EASY</button>
-    <button class="d-btn on" data-d="medium" style="border-color:#ffee00;background:#ffee00" onclick="selDiff(this)">MEDIUM</button>
-    <button class="d-btn" data-d="hard"   style="border-color:#ff0080;color:#ff0080" onclick="selDiff(this)">HARD</button>
-  </div>
   <input type="text" id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off" spellcheck="false">
   <button class="btn pink" id="conn-btn" onclick="doConn()">VERBINDEN</button>
   <div id="msg" class="inf">Klaar</div>
@@ -160,22 +145,6 @@ function askPerm() {
 }
 function skipPerm() { show('pg-conn'); }
 
-// ── Difficulty ──
-let myDiff = 'medium';
-function selDiff(el) {
-  myDiff = el.dataset.d;
-  document.querySelectorAll('.d-btn').forEach(b => { b.classList.remove('on'); b.style.background='transparent'; });
-  el.classList.add('on');
-  const colors = {easy:'#00ff88',medium:'#ffee00',hard:'#ff0080'};
-  el.style.background = colors[myDiff];
-  el.style.color = '#000';
-  document.getElementById('kick').style.setProperty('--pc', colors[myDiff]);
-  document.getElementById('mbar').style.background = `linear-gradient(90deg,#00f5ff,${colors[myDiff]})`;
-}
-// init kick color
-document.getElementById('kick').style.setProperty('--pc','#ffee00');
-document.getElementById('mbar').style.background='linear-gradient(90deg,#00f5ff,#ffee00)';
-
 // ── MQTT ──
 const WS_BROKER = 'wss://broker.hivemq.com:8884/mqtt';
 let mqttClient = null, roomCode = '', hitSeq = 0, tapCD = false;
@@ -202,7 +171,7 @@ function connectMqtt() {
       if (!err) {
         setMsg('Wachten op spelscherm…','inf');
         const name = document.getElementById('pname').value.trim() || 'Speler';
-        mqttPub({ type:'join', name, diff:myDiff });
+        mqttPub({ type:'join', name });
       } else {
         setMsg('Subscribe mislukt','err');
         document.getElementById('conn-btn').disabled = false;
@@ -248,9 +217,6 @@ function mqttPub(data) {
 
 function goPlay(m) {
   show('pg-play'); if(m) updHUD(m); startMotion();
-  // Apply player color to kick
-  const colors={easy:'#00ff88',medium:'#ffee00',hard:'#ff0080'};
-  document.getElementById('kick').style.setProperty('--pc', colors[myDiff]||'#ff0080');
 }
 
 function updHUD(m) {

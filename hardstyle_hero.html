@@ -26,9 +26,6 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
 .logo{font-family:'Orbitron',monospace;font-size:clamp(1.8rem,6vw,4rem);font-weight:900;letter-spacing:.15em;background:linear-gradient(90deg,var(--pk),var(--bl),var(--ye));-webkit-background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 18px var(--pk));animation:lg 2.5s ease-in-out infinite alternate;}
 @keyframes lg{from{filter:drop-shadow(0 0 12px var(--pk));}to{filter:drop-shadow(0 0 30px var(--bl));}}
 .sub{font-size:.85rem;letter-spacing:.4em;color:var(--bl);opacity:.65;margin-top:-10px;}
-.d-row{display:flex;gap:7px;}
-.d-btn{padding:6px 16px;border:1px solid rgba(255,255,255,.18);background:transparent;color:rgba(255,255,255,.38);font-family:'Orbitron',monospace;font-size:.6rem;letter-spacing:.1em;cursor:pointer;transition:all .18s;}
-.d-btn.on{color:var(--ye);border-color:var(--ye);box-shadow:0 0 10px rgba(255,238,0,.22);}
 .slist{display:flex;flex-direction:column;gap:6px;width:min(520px,93vw);max-height:38vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--pk) transparent;padding-right:3px;}
 .si{display:flex;align-items:stretch;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-left:3px solid var(--pk);transition:all .2s;}
 .si:hover{border-color:rgba(0,245,255,.3);transform:translateX(3px);}
@@ -180,11 +177,6 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
 <div id="s-menu">
   <div class="logo">HARDSTYLE HERO</div>
   <div class="sub">Kick it. Hard.</div>
-  <div class="d-row">
-    <button class="d-btn on" data-d="easy"   onclick="setDiff(this)">EASY</button>
-    <button class="d-btn"    data-d="medium" onclick="setDiff(this)">MEDIUM</button>
-    <button class="d-btn"    data-d="hard"   onclick="setDiff(this)">HARD</button>
-  </div>
   <div class="upz" id="upz">
     <input type="file" accept="audio/*,.mp3,.ogg,.wav,.flac,.aac,.m4a" id="fi" multiple>
     <p>🎵 Sleep je hardstyle track hierheen<br><span>of klik om een bestand te kiezen</span></p>
@@ -290,9 +282,8 @@ rsz();addEventListener('resize',rsz);
 (function loop(){bgX.fillStyle='rgba(4,0,10,.18)';bgX.fillRect(0,0,BW,BH);BP=Math.max(0,BP-.04);BL.forEach(l=>{bgX.save();bgX.globalAlpha=l.op+BP*.18;bgX.strokeStyle=`hsl(${l.hue},100%,62%)`;bgX.lineWidth=1;bgX.beginPath();bgX.moveTo(l.x,l.y);bgX.lineTo(l.x,l.y+l.len);bgX.stroke();bgX.restore();l.y+=l.spd;l.hue=(l.hue+.2)%360;if(l.y>BH){l.y=-l.len;l.x=Math.random()*BW;}});requestAnimationFrame(loop);})();
 
 // ═══════════════════════ DIFFICULTY ═══════════════════════
-const DIFF={easy:{skip:2,ppf:5},medium:{skip:1,ppf:7},hard:{skip:1,ppf:9.5}};
-let diff='easy';
-function setDiff(el){diff=el.dataset.d;document.querySelectorAll('.d-btn').forEach(b=>b.classList.remove('on'));el.classList.add('on');}
+// Fixed note speed — all beats, no skipping
+const NOTE_PPF = 7; // pixels per frame at 60fps
 
 // ═══════════════════════ AUDIO ═══════════════════════
 let actx=null,curSrc=null;
@@ -536,10 +527,9 @@ function buildGPlayers(){
   gPlayers = [];
   Object.entries(players).forEach(([id,p])=>{
     if(!p.connected)return;
-    const pDiff = p.diff || 'medium';
     gPlayers.push({
       id, name:p.name, color:p.color,
-      diff:pDiff, ppf:DIFF[pDiff]?.ppf||7,
+      ppf:NOTE_PPF,
       sc:0,cb:1,maxCb:0,hp:0,hg:0,hm:0,
       liveN:[], noteQ:[],
       laneEl:null, kbEl:null, lfEl:null,
@@ -555,13 +545,8 @@ function buildGPlayers(){
 }
 
 function buildNoteQueueForPlayer(p){
-  const skip = DIFF[p.diff]?.skip||1;
-  const q=[]; let idx=0;
-  activeSong.notes.forEach(n=>{
-    if(skip===2&&idx%2!==0){idx++;return;}
-    q.push({ms:n.ms}); idx++;
-  });
-  return q.sort((a,b)=>a.ms-b.ms);
+  // Every beat, no skipping
+  return activeSong.notes.map(n=>({ms:n.ms})).sort((a,b)=>a.ms-b.ms);
 }
 
 function buildLanes(){
@@ -872,10 +857,6 @@ function handleMobileMsg(pid,msg){
     const p=players[pid];
     if(msg.seq!==p.lastHitSeq){p.lastHitSeq=msg.seq;pressPlayerKey(pid);}
   }
-  if(msg.type==='diff_change'&&players[pid]){
-    players[pid].diff=msg.diff;
-    updPlayersPanel();
-  }
 }
 
 function updPlayersPanel(){
@@ -886,7 +867,6 @@ function updPlayersPanel(){
     <div class="pl-row" style="opacity:${p.connected?1:.38}">
       <div class="pl-dot" style="background:${p.color};box-shadow:0 0 4px ${p.color}"></div>
       <div class="pl-name" style="color:${p.color}">${p.name}</div>
-      <div class="pl-diff">${p.diff||'med'}</div>
       <div class="pl-sc">${String(p.sc||0).padStart(6,'0')}</div>
     </div>`).join('');
 }
