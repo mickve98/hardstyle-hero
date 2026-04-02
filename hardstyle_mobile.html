@@ -281,18 +281,11 @@ function showFB(txt,color) {
   el.textContent=txt; el.style.color=color||'#fff'; el.style.opacity='1';
   clearTimeout(fbT); fbT=setTimeout(()=>el.style.opacity='0',480);
 
-  // Haptic feedback — different pattern per hit type
+  // Haptic feedback
   if(navigator.vibrate){
-    if(txt==='PERFECT!'){
-      // Two short sharp pulses — voelbaar en duidelijk
-      navigator.vibrate([40, 30, 40]);
-    } else if(txt==='GOOD'){
-      // One medium pulse
-      navigator.vibrate(55);
-    } else if(txt==='MISS'){
-      // One long dull buzz
-      navigator.vibrate(120);
-    }
+    if(txt==='PERFECT!')  navigator.vibrate([60, 20, 60]);  // twee harde pulsen
+    else if(txt==='GOOD') navigator.vibrate(25);             // één zachte puls
+    // MISS: geen trilling
   }
 }
 
