@@ -107,11 +107,11 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
 .gnote{position:absolute;left:3px;right:3px;height:26px;border-radius:4px;border:1px solid rgba(255,255,255,.45);display:flex;align-items:center;justify-content:center;font-family:'Orbitron',monospace;font-size:.62rem;font-weight:900;color:rgba(0,0,0,.55);box-shadow:0 0 10px currentColor;}
 #hl-wrap{display:none;}
 .hl-seg{display:none;}
-/* Hitline: key-row is hidden, so hitline sits 20px from bottom of lane */
+/* Hitline: higher in lane for better visibility */
 .player-lane .hitline{
   position:absolute;
   left:0;right:0;
-  bottom:20px;
+  bottom:18%;
   height:3px;
   z-index:20;
   pointer-events:none;
@@ -127,6 +127,18 @@ body{background:var(--dk);font-family:'Rajdhani',sans-serif;overflow:hidden;heig
   animation:hzp 1.4s ease-in-out infinite alternate;
 }
 @keyframes hzp{from{opacity:.45;box-shadow:none;}to{opacity:1;box-shadow:0 0 12px currentColor;}}
+/* Note hit animations */
+@keyframes hit-perfect{
+  0%  {transform:scaleY(1.3) scaleX(1.1);filter:brightness(3) saturate(2);opacity:1;}
+  40% {transform:scaleY(.4)  scaleX(1.3);filter:brightness(2) saturate(2);opacity:.9;}
+  100%{transform:scaleY(0)   scaleX(1.5);filter:brightness(1);opacity:0;}
+}
+@keyframes hit-good{
+  0%  {transform:scale(1.1);filter:brightness(2);opacity:1;}
+  100%{transform:scale(.5) scaleY(0);filter:brightness(1);opacity:0;}
+}
+.gnote.hit-perfect{animation:hit-perfect .18s ease-out forwards;}
+.gnote.hit-good   {animation:hit-good    .14s ease-out forwards;}
 /* key button row */
 #key-row{display:none;}
 .kb{flex:1;max-width:140px;height:58px;border:2px solid transparent;border-radius:4px;cursor:pointer;font-family:'Orbitron',monospace;font-size:.68rem;font-weight:900;color:rgba(0,0,0,.6);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;transition:all .07s;-webkit-tap-highlight-color:transparent;user-select:none;}
@@ -1358,9 +1370,9 @@ function startGame(){
 function replaySong(){if(activeSong)startGame();}
 
 function getHitY(){
-  // Must match .player-lane .hitline { bottom: 20px }
+  // Must match .player-lane .hitline { bottom: 18% }
   const hwH = Math.max(200, document.getElementById('hw').clientHeight);
-  return hwH - 20;
+  return hwH - Math.round(hwH * 0.18);
 }
 
 function gTick(ts){
@@ -1433,8 +1445,14 @@ function pressPlayerKey(playerId){
 
 function doHit(p,note,perfect){
   note.hit=true;
-  note.el.style.opacity='0';note.el.style.transform='scaleY(0)';
-  setTimeout(()=>note.el.remove(),80);
+  // Trigger colour animation then remove
+  note.el.classList.add(perfect ? 'hit-perfect' : 'hit-good');
+  // Change colour to feedback colour during animation
+  note.el.style.background = perfect ? '#ffee00' : '#00f5ff';
+  note.el.style.boxShadow  = perfect
+    ? '0 0 24px #ffee00, 0 0 48px #ffee0088'
+    : '0 0 16px #00f5ff, 0 0 32px #00f5ff66';
+  setTimeout(()=>note.el.remove(), perfect ? 200 : 160);
   // Remove from liveN immediately
   const idx=p.liveN.indexOf(note);
   if(idx>=0)p.liveN.splice(idx,1);
@@ -1443,7 +1461,6 @@ function doHit(p,note,perfect){
   p.cb=Math.min(p.cb+1,20);p.maxCb=Math.max(p.maxCb,p.cb);
   showFB(perfect?'PERFECT!':'GOOD',perfect?'#ffee00':'#00f5ff',p);
   updScoreboard();
-  // Send feedback + score to the relevant mobile player
   mqttPublish('host', {
     type: 'fb',
     text: perfect ? 'PERFECT!' : 'GOOD',
